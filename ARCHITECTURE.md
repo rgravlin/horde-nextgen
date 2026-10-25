@@ -1,8 +1,8 @@
 # ARCHITECTURE.md: Neon Horde
 
 Structure every later task follows. Engine choice and pinned versions live in TECH.md; the look lives in DESIGN.md.
-Paths are relative to the repo root. (`package.json` and `node_modules` do not exist yet — the scaffolding task creates
-them with exactly the scripts listed in "Commands" below.)
+Paths are relative to the repo root. (`package.json`, the root config files and `node_modules` now exist; the scripts
+below are the ones `package.json` defines.)
 
 ## One shared core, two runtimes
 
@@ -128,11 +128,11 @@ Playwright specs assert on `__forgeState()`, not on pixels.
 ## Commands (from `package.json`, run in `/work`)
 
 ```
-npm run dev         # vite dev server
-npm run build       # vite build → dist/
+npm run dev         # vite dev server on http://127.0.0.1:5173
+npm run build       # tsc --noEmit && vite build → dist/
 npm run typecheck   # tsc --noEmit
 npm test            # vitest run (tests/unit, node env)
-npm run test:e2e    # playwright test (tests/e2e, webServer: vite build + preview)
+npm run test:e2e    # playwright test (tests/e2e, webServer: `npx vite --port 5173 --strictPort`, reused if already up)
 npm run bench       # tsx tools/bench.ts (sim perf gate)
 ```
 

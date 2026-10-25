@@ -1,0 +1,33 @@
+{
+  "name": "horde-nextgen",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Neon Horde: a top-down horde survival shooter on three.js r186 WebGPURenderer with a headless TypeScript simulation.",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "bench": "tsx tools/bench.ts"
+  },
+  "dependencies": {
+    "@fontsource/chakra-petch": "5.3.0",
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.48.2",
+    "@types/node": "22.20.5",
+    "@types/three": "0.186.0",
+    "playwright": "1.48.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "6.4.5",
+    "vitest": "3.2.7"
+  }
+}

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>Neon Horde</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #0b0d14;
+        color: #e8ecf5;
+        font-family: 'IBM Plex Mono', ui-monospace, monospace;
+      }
+
+      #scene {
+        position: fixed;
+        inset: 0;
+      }
+
+      #scene canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      #ui {
+        position: fixed;
+        inset: 0;
+      }
+
+      /* Safe-area margin from DESIGN.md; the placeholder is replaced by the
+         HUD and menus in later tasks. */
+      .placeholder {
+        margin: 24px;
+        font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #2ef2ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="scene">
+      <canvas id="gl"></canvas>
+    </div>
+    <div id="ui"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
