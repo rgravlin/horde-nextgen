@@ -1,0 +1,155 @@
+# ARCHITECTURE.md: Neon Horde
+
+Structure every later task follows. Engine choice and pinned versions live in TECH.md; the look lives in DESIGN.md.
+Paths are relative to the repo root. (`package.json` and `node_modules` do not exist yet — the scaffolding task creates
+them with exactly the scripts listed in "Commands" below.)
+
+## One shared core, two runtimes
+
+`src/sim` + `src/content` **are** the game: every rule (movement, steering, collision, damage, spawning, XP, scoring)
+lives there, as plain TypeScript with **no imports from `three`, the DOM, `window`, `document`, `localStorage`,
+`setTimeout`/`setInterval` or `requestAnimationFrame`**. The identical code runs in two runtimes, so no logic is
+written twice:
+
+- the browser, wired by `src/main.ts`;
+- Node, headless — vitest unit tests, `tools/bench.ts`, `tools/replay.ts`.
+
+There is no server and no worker today. The seam is kept anyway: `step(world, frame)` takes a `World` plus one
+`InputFrame`, mutates pooled arrays in place and appends to event rings. Moving the sim to a Worker later would be a
+transport change, not a rewrite.
+
+Everything above the core is either a **reader** of state (render, audio, UI) or a **provider** of input. No file
+outside `src/sim` may decide gameplay outcomes.
+
+## Module map and allowed imports
+
+| Module | Owns | May import |
+|---|---|---|
+| `src/content/` | typed data only: `weapons.ts`, `enemies.ts`, `powerups.ts`, `levels.ts`, `types.ts` (the `WeaponDef`/`EnemyDef`/`PowerupDef`/`LevelDef` schemas, defined once) | nothing |
+| `src/sim/` | `world.ts` (`World`, pool allocation, the `InputFrame` type), `step.ts` (system order), `rng.ts` (xoshiro128**), `spatialHash.ts`, `pools.ts`, `systems/{move,steer,weapons,projectiles,enemies,pickups,waves}.ts`, `serialize.ts`, `replay.ts`, `config.ts` (pool caps, tuning defaults) | `src/content` only |
+| `src/render/` | `renderer.ts` (WebGPURenderer + `renderer.init()`, backend probe), `camera.ts` (three-quarter chase cam, interpolation, shake), `instancing.ts` (one `InstancedMesh` per archetype + props), `particles.ts` (TSL compute particles), `post.ts` (`RenderPipeline`: bloom → chromatic → ACES), `lights.ts` (pooled point lights), `assets.ts` (glTF loads), `quality.ts` (Low/Med/High/Ultra knobs) | `three`, `three/webgpu`, `three/tsl`, read-only `sim`/`content` |
+| `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
+| `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
+| `src/input/` | `sampler.ts` (keyboard + mouse → `InputFrame`), `gamepad.ts`, `bindings.ts` (default map, remappable) | `sim` types only |
+| `src/game/` | `app.ts` (scene state machine), `loop.ts` (fixed-step accumulator), `persist.ts` (save/load), `debugState.ts` (`__forgeState`) | `sim`, `content`, `input`, and the render/audio/ui modules |
+| `src/main.ts` | composition root: build the `World`, the renderer, audio, UI and input, register `window.__forgeState` / `window.__forgeDebug` | everything |
+
+Hard rules, checked in CI:
+
+- `tests/unit/purity.test.ts` greps `src/sim/**` and `src/content/**` for `three`, `document`, `window`,
+  `localStorage`, `performance.now` and timer calls and fails on any hit.
+- `render`, `audio` and `ui` never import each other and never write to the `World`; they only consume it. Only
+  `src/sim/` mutates game state; `src/game/` and `src/input/` feed it.
+- `src/audio` and `src/ui` must not import from `src/render` — a headless run with rendering disabled still plays
+  sound and updates the HUD.
+- Anything touching `window` or `localStorage` goes through a port (`StorageLike`, `Clock`) injected from
+  `main.ts`/`game`, so unit tests pass in-memory stubs and Node stays green.
+
+## Data flow
+
+```
+DOM/gamepad events ──▶ InputSampler ──(once per tick)──▶ InputFrame
+                                                        │
+                    step(world, frame)  ── fixed 1/60 s, ≤5 steps/frame
+                        │  mutates SoA pools in place
+                        └─▶ event rings: hit, kill, spawn, sfx, telegraph, shake, damageNumber
+                                     │ (read-only, consumed once per rendered frame)
+                     ┌───────────────┼───────────────┐
+                     ▼               ▼               ▼
+                 src/render      src/audio        src/ui + HUD
+```
+
+- Handlers only set bits in the sampler's scratch `InputFrame`. Gameplay never changes inside a key/mouse handler,
+  so replays and tests build `InputFrame`s directly (`replay.ts` decodes `{seed, chapter, inputs}`).
+- `step` order is fixed and listed in `step.ts`: waves → enemy AI (behaviours emit telegraph events) → weapon fire →
+  projectiles → move/steer → collision + damage (spatial hash, cell 2) → pickups/XP → deaths and cleanup.
+- Iteration is by pool index, lowest index first, and randomness only comes from `world.rng`, so the order never
+  depends on JS object or Map iteration.
+- One browser frame: `sampler.sample()` → drain accumulator with `step` → `render(alpha = acc/dt)` + `audio.drain()`
+  + `ui.sync(state)`. Rendering interpolates previous/current positions; pausing stops calling `step` and keeps
+  drawing a frozen frame.
+- Ring buffers have fixed capacity and drop oldest on overflow (a `droppedEvents` counter keeps that observable).
+  The sim never blocks on a consumer.
+
+## Scene state machine (`src/game/app.ts`)
+
+States: `menu`, `levelselect`, `playing`, `levelup`, `paused`, `summary`, `victory`, `settings`, `history`.
+Only `playing` advances the sim; every other state freezes it (DESIGN.md's "game freezes, playfield dims").
+
+| State | Sim | Input means | Overlay |
+|---|---|---|---|
+| menu | no | menu nav; camera orbits a demo arena | title stack |
+| levelselect | no | pick unlocked chapter (grid of 10) | chapter grid |
+| playing | 60 Hz | gameplay map (move/aim/fire/dash/swap/pause) | HUD |
+| levelup | no | 1/2/3 or click picks a card, R rerolls | 3 cards + reroll |
+| paused | no | Esc/P resumes; quit-to-menu saves first | pause panel |
+| summary | no | restart level / restart run / menu | death stats |
+| victory | no | menu / arena | victory sweep |
+| settings | no | tabs Audio/Video/Controls/Gameplay | settings panel |
+| history | no | nav | mono stats table |
+
+Transitions are declared in a table and are triggered by input events or by sim events (`xpThreshold`, `playerDead`,
+`chapterCleared`) — never by direct DOM manipulation. `levelup`, `paused`, `settings` and `history` remember where
+they came from and return there. `settings`/`history` are reachable from both `menu` and `paused`.
+
+## localStorage keys (all JSON, all versioned)
+
+| Key | Contents | Written |
+|---|---|---|
+| `neonhorde.save.v1` | resumable run snapshot: `seed`, `chapter`, `tick`, wave progress, player, weapon slots, powerups, score, kills | autosave every 30 s, on pause, at each chapter end |
+| `neonhorde.settings.v1` | master/sfx/music volume, quality tier, resolution scale, auto-fire, dash keybind map, shake amount | on change |
+| `neonhorde.meta.v1` | unlocked chapters, best score per chapter, run-history rows for the history screen | when a run ends |
+
+`serialize(world)` in `src/sim/serialize.ts` only produces and consumes the snapshot string; the localStorage read
+and write happen in `src/game/persist.ts` through the `StorageLike` port. A `v1` payload that fails to parse or
+shape-check is discarded and counted in `errors`, never fatal.
+
+## State for checks
+
+`window.__forgeState()` (`src/game/debugState.ts`) builds a fresh plain object each call from the `World` plus
+`renderer.backend` and an fps estimate — stable key set per TECH.md, ≤10 nearest enemies, no pool references
+leaked. `window.__forgeDebug` (`setSeed`, `spawn`, `grantXp`, `giveWeapon`, `bench`) routes through `step`-side
+APIs only, so scenario results stay reproducible. Caught errors increment `errors` instead of being swallowed.
+No URL parameter or key jumps to a state purely so it can be photographed; scenarios play their way there.
+
+## Tests and tools
+
+| Path | Kind | Covers |
+|---|---|---|
+| `tests/unit/*.test.ts` | vitest, `environment: "node"`, no DOM | rng + spatial hash; every weapon kind (spread, pierce, falloff, reload, heat, chain, DoT); every AI behaviour (charger telegraphs before dashing, splitter spawns children, exploder AoE); XP/level-up, powerup tiers capped at 5, dash i-frames; save/load round-trip; same seed + inputs → same `hashWorld`; `purity.test.ts` for the import rule |
+| `tests/e2e/*.spec.ts` | Playwright 1.48.2, Chromium from `/ms-playwright`, flags `--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader` | `campaign.spec.ts` (play → move → kills → level-up → pause/resume, `errors === 0`, then the same pass with `?gl=webgl2` asserting `backend === "webgl2"`), `persistence.spec.ts` (save/reload/resume), `death.spec.ts` (death → summary), `bench.spec.ts` (writes `bench-results.json`, reports only) |
+| `tools/bench.ts` | `tsx`, Node, no renderer | headless sim gate: median ≤4 ms/step at 1,000 enemies over 600 ticks, non-zero exit above that |
+| `tools/replay.ts` | `tsx` | replays a recorded `{seed, inputs}` log and asserts the hash matches |
+| `forge-scenarios.json` | root | the scenario steps and `state` assertions the Playwright specs read. A new mechanic lands with a step or assertion that fails without it |
+
+Unit tests construct a `World` from a seed and feed it `InputFrame`s — no DOM, no renderer, no audio context.
+Playwright specs assert on `__forgeState()`, not on pixels.
+
+## Commands (from `package.json`, run in `/work`)
+
+```
+npm run dev         # vite dev server
+npm run build       # vite build → dist/
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run (tests/unit, node env)
+npm run test:e2e    # playwright test (tests/e2e, webServer: vite build + preview)
+npm run bench       # tsx tools/bench.ts (sim perf gate)
+```
+
+Root config files: `tsconfig.json` (strict, `moduleResolution: "bundler"`), `vite.config.ts`, `vitest.config.ts`
+(include `tests/unit/**/*.test.ts`, `environment: "node"`), `playwright.config.ts`. Assets live in
+`public/assets/` with sources and licences recorded in `ASSETS.md`; README.md keeps the run instructions and the
+"add a weapon / enemy / level / model" recipes, and content additions are one data entry plus a mesh or behaviour
+only when genuinely new.
+
+## Invariants
+
+1. Fixed 1/60 Hz sim, at most 5 steps per frame; rendering interpolates and never scales gameplay by raw frame time.
+2. No per-tick allocation: no closures, `.map`/`.filter`, or new objects inside `step`. Pools with the caps in
+   `config.ts` (enemies 2048, projectiles 2048, enemy projectiles 512, shards 1024, particles 16k, damage numbers
+   64, lights 16).
+3. Determinism: same seed + same input log → same `hashWorld(world)` (FNV-1a over the pools).
+4. GPU paths (compute particles, bloom, shadows) are cosmetic. If a GPU call fails, fall back to the CPU path;
+   gameplay and the HUD must be unaffected.
+5. Adding a feature means: data in `src/content`, rules in `src/sim`, presentation driven by events in
+   `render`/`audio`/`ui`, and a scenario step or `state` assertion proving it.
