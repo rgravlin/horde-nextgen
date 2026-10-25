@@ -294,8 +294,11 @@ export function installZones(w: World, zones: readonly ZoneLike[]): void {
  * The counts live in `start[c + 1]` while they are being counted so the prefix sum has
  * somewhere to happen without a second array, and the scatter reads each cell's count before
  * overwriting the slot beneath it.
+ *
+ * Exported for `serialize.ts`: a restored floor arrives as boxes, not as an index, and the
+ * index is what every cover query walks, so a floor restored without it is an invisible one.
  */
-function buildGrid(f: PropField): void {
+export function buildGrid(f: PropField): void {
   if (f.gw === 0 || f.gh === 0) return;
 
   const gw = f.gw;

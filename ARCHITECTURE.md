@@ -26,7 +26,7 @@ outside `src/sim` may decide gameplay outcomes.
 | Module | Owns | May import |
 |---|---|---|
 | `src/content/` | typed data only: `weapons.ts`, `enemies.ts`, `powerups.ts`, `levels.ts`, `types.ts` (the `WeaponDef`/`EnemyDef`/`PowerupDef`/`LevelDef` schemas, defined once) | nothing |
-| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,projectiles,status,enemies,enemyProjectiles,pickups,waves}.ts`, `systems/obstacles.ts` (the one cover + floor-hazard path: swept circle-vs-box and circle-vs-circle push-out, and the hazard clocks), `systems/levels.ts` (the chapter arc: which floor is under the player, and what its script ends on), later `serialize.ts`, `replay.ts`, `config.ts` | `src/content` only |
+| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,projectiles,status,enemies,enemyProjectiles,pickups,waves}.ts`, `systems/obstacles.ts` (the one cover + floor-hazard path: swept circle-vs-box and circle-vs-circle push-out, and the hazard clocks), `systems/levels.ts` (the chapter arc: which floor is under the player, and what its script ends on), `serialize.ts` (the save: whole pools and the floor as bytes, scalars as numbers), `replay.ts` (records a run's input and plays it back), later `config.ts` | `src/content` only |
 | `src/render/` | `renderer.ts` (WebGPURenderer + `renderer.init()`, backend probe), `camera.ts` (three-quarter chase cam, interpolation, shake), `instancing.ts` (one `InstancedMesh` per archetype + props), `particles.ts` (TSL compute particles), `post.ts` (`RenderPipeline`: bloom → chromatic → ACES), `lights.ts` (pooled point lights), `assets.ts` (glTF loads), `quality.ts` (Low/Med/High/Ultra knobs) | `three`, `three/webgpu`, `three/tsl`, read-only `sim`/`content` |
 | `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
 | `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
@@ -60,7 +60,8 @@ DOM/gamepad events ──▶ InputSampler ──(once per tick)──▶ InputFr
 ```
 
 - Handlers only set bits in the sampler's scratch `InputFrame`. Gameplay never changes inside a key/mouse handler,
-  so replays and tests build `InputFrame`s directly (`replay.ts` decodes `{seed, chapter, inputs}`).
+  so replays and tests build `InputFrame`s directly (`replay.ts` carries `{seed, chapter, autoFire, ticks, codes, aim}`:
+  one packed frame code per tick, with the aim pair kept beside it because the packing quantises it).
 - `step` order is fixed and listed in `step.ts`: timers → player move/dash → broad-phase rebuild (spatial hash,
   cell 2) → enemy AI, contact damage and the rounds they begin → weapon fire, projectile flight and hits → blast
   resolution → enemy-round flight and hits → the level-up pick → pickups/XP → wave spawns. The grid is built before
@@ -114,13 +115,26 @@ they came from and return there. `settings`/`history` are reachable from both `m
 
 | Key | Contents | Written |
 |---|---|---|
-| `neonhorde.save.v1` | resumable run snapshot: `seed`, `chapter`, `tick`, wave progress, player, weapon slots, powerups, score, kills | autosave every 30 s, on pause, at each chapter end |
+| `neonhorde.save.v1` | resumable run snapshot: `seed`, `chapter`, `tick`, wave progress, player, weapon slots, powerups, score, kills — plus the five pools and the floor, byte for byte | autosave every 30 s, on pause, at each chapter end |
 | `neonhorde.settings.v1` | master/sfx/music volume, quality tier, resolution scale, auto-fire, dash keybind map, shake amount | on change |
 | `neonhorde.meta.v1` | unlocked chapters, best score per chapter, run-history rows for the history screen | when a run ends |
 
-`serialize(world)` in `src/sim/serialize.ts` only produces and consumes the snapshot string; the localStorage read
+`serialize(world)` in `src/sim/serialize.ts` only produces and consumes the snapshot object; the localStorage read
 and write happen in `src/game/persist.ts` through the `StorageLike` port. A `v1` payload that fails to parse or
-shape-check is discarded and counted in `errors`, never fatal.
+shape-check is discarded (`deserialize` returns `null`, never throws) and counted in `errors`, never fatal.
+
+Two things about the shape are load-bearing, so they are recorded here rather than only in the code:
+
+- **Pools travel as bytes, not as JSON numbers.** `hashWorld` folds whole typed arrays, and `alloc` clears a slot
+  on the way *in*, so a dead slot still carries the body that died in it and the free stack's order decides where
+  the next body lands. Both are part of the run's identity, so both are restored byte for byte (columns packed
+  through one run-length codec, then base64) instead of being rewritten as numbers, which would collapse `-0` and
+  the float32 patterns. Anything that is a double in the `World` — xp, score, a hazard clock — stays a JSON
+  number for the opposite reason: 32 bits would lose the thing it is there to keep.
+- **A replay is a recipe, a save is a state.** `replay.ts` stores the seed, the chapter and one packed frame code
+  per tick plus its aim pair, and `playReplay` rebuilds the run by stepping it, which is what keeps a chapter at
+  tens of kilobytes and lets a changed build be diffed against a recorded run by hash. It assumes default pool
+  sizes; a save carries its own.
 
 ## State for checks
 
