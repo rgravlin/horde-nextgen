@@ -26,7 +26,7 @@ outside `src/sim` may decide gameplay outcomes.
 | Module | Owns | May import |
 |---|---|---|
 | `src/content/` | typed data only: `weapons.ts`, `enemies.ts`, `powerups.ts`, `levels.ts`, `types.ts` (the `WeaponDef`/`EnemyDef`/`PowerupDef`/`LevelDef` schemas, defined once) | nothing |
-| `src/sim/` | `world.ts` (`World`, pool allocation, the `InputFrame` type), `step.ts` (system order), `rng.ts` (xoshiro128**), `spatialHash.ts`, `pools.ts`, `systems/{move,steer,weapons,projectiles,enemies,pickups,waves}.ts`, `serialize.ts`, `replay.ts`, `config.ts` (pool caps, tuning defaults) | `src/content` only |
+| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,enemies,pickups,waves}.ts`, later `serialize.ts`, `replay.ts`, `config.ts` | `src/content` only |
 | `src/render/` | `renderer.ts` (WebGPURenderer + `renderer.init()`, backend probe), `camera.ts` (three-quarter chase cam, interpolation, shake), `instancing.ts` (one `InstancedMesh` per archetype + props), `particles.ts` (TSL compute particles), `post.ts` (`RenderPipeline`: bloom → chromatic → ACES), `lights.ts` (pooled point lights), `assets.ts` (glTF loads), `quality.ts` (Low/Med/High/Ultra knobs) | `three`, `three/webgpu`, `three/tsl`, read-only `sim`/`content` |
 | `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
 | `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
@@ -61,8 +61,12 @@ DOM/gamepad events ──▶ InputSampler ──(once per tick)──▶ InputFr
 
 - Handlers only set bits in the sampler's scratch `InputFrame`. Gameplay never changes inside a key/mouse handler,
   so replays and tests build `InputFrame`s directly (`replay.ts` decodes `{seed, chapter, inputs}`).
-- `step` order is fixed and listed in `step.ts`: waves → enemy AI (behaviours emit telegraph events) → weapon fire →
-  projectiles → move/steer → collision + damage (spatial hash, cell 2) → pickups/XP → deaths and cleanup.
+- `step` order is fixed and listed in `step.ts`: timers → player move/dash → broad-phase rebuild (spatial hash,
+  cell 2) → enemy AI and contact damage → weapon fire, projectile flight and hits → the level-up pick →
+  pickups/XP → wave spawns. The grid is built before the passes that query it, and a kill is resolved where the
+  damage lands, so a corpse never spends a tick blocking the crowd or soaking a piercing shot.
+- Projectile flight lives in `systems/weapons.ts` next to the firing rules, because a round's damage, falloff,
+  pierce and knockback all come off its `WeaponDef`; `systems/` gains a file only when a pass has no home.
 - Iteration is by pool index, lowest index first, and randomness only comes from `world.rng`, so the order never
   depends on JS object or Map iteration.
 - One browser frame: `sampler.sample()` → drain accumulator with `step` → `render(alpha = acc/dt)` + `audio.drain()`

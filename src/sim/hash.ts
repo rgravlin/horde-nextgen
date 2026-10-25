@@ -116,6 +116,28 @@ export function hashWorld(world: World): number {
   h = mixScalar(h, p.aimY);
   h = fnv32Byte(h, p.alive ? 1 : 0);
 
+  // The run's own combat state, not just the pools: a magazine that drained a tick
+  // late, a wave timer that drifted or a power-up tier that double-counted would
+  // otherwise fingerprint the same as a clean run.
+  h = fnv32Byte(h, world.over ? 1 : 0);
+  h = mixScalar(h, world.enemyNear);
+  for (let i = 0; i < world.slots.length; i++) {
+    const slot = world.slots[i];
+    h = fnv32Word(h, slot.weapon);
+    h = fnv32Word(h, slot.ammo);
+    h = mixScalar(h, slot.cooldown);
+    h = mixScalar(h, slot.reload);
+  }
+  h = fnv32Byte(h, world.activeSlot);
+  h = mixU8s(h, world.powerTiers);
+  h = fnv32Byte(h, world.pendingLevelUp ? 1 : 0);
+  h = fnv32Byte(h, world.rerollUsed ? 1 : 0);
+  for (let i = 0; i < world.levelUpChoices.length; i++) h = fnv32Word(h, world.levelUpChoices[i]);
+  h = fnv32Byte(h, world.wave.running ? 1 : 0);
+  h = fnv32Word(h, world.wave.index);
+  h = mixScalar(h, world.wave.timeLeft);
+  h = mixScalar(h, world.wave.timer);
+
   h = hashPool(h, world.enemies);
   h = hashPool(h, world.shots);
   h = hashPool(h, world.enemyShots);

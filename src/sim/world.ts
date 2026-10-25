@@ -9,6 +9,8 @@
  * createWorld(options) can shrink them for tests.
  */
 
+import { baseStats, POWERUPS, type StatBlock } from '../content/powerups';
+import { WEAPONS } from '../content/weapons';
 import { createRng, type Rng } from './rng';
 import { createSpatialHash, type SpatialHash } from './spatialHash';
 
@@ -36,6 +38,47 @@ export const TUNE = {
   playerRadius: 0.4,
   /** Broad-phase cell edge in world units. */
   hashCell: 2,
+  /** m collision radius of a projectile, added to the target's for a hit test. */
+  shotRadius: 0.12,
+  /** m of barrel the shot spawns downrange of the player's centre. */
+  shotStart: 0.2,
+  /** m — XP shards inside this radius fly to the player. */
+  magnetRadius: 2.5,
+  /** m — auto-fire only wakes up when an enemy is this close. */
+  autoFireRange: 18,
+  /** m/s^2 a shard gains while inside the magnet field. */
+  shardAccel: 26,
+  /** m/s cap on shard flight, so a long pull does not become a bullet. */
+  shardSpeed: 14,
+  /** Drag per tick on a shard outside the magnet field. */
+  shardDrag: 0.9,
+  /** s a shard hangs around before it expires. */
+  shardLife: 25,
+  /** m — a shard this close to the player is gone in. */
+  collectRadius: 0.5,
+  /** s of invulnerability any hit buys, so a crowd cannot shred the player. */
+  hurtIframes: 0.5,
+  /** m half-edges of the 32x18 m view rect; spawns land just outside it. */
+  viewHalfX: 16,
+  viewHalfY: 9,
+  /** m of extra margin outside the view rect a spawn may land in. */
+  spawnMargin: 2.5,
+  /** s between spawn batches at wave 1, and the floor it decays toward. */
+  spawnGap: 1.4,
+  spawnGapDecay: 0.88,
+  spawnGapFloor: 0.3,
+  /** Largest batch the timer-driven spawner will ever emit. */
+  batchCap: 12,
+  /** s a wave lasts before its index ticks up and the spawner tightens. */
+  waveLength: 12,
+  /** s before the first batch of a chapter, so it does not open on a crowd. */
+  firstBatchDelay: 0.6,
+  /** XP for the next level is xpBase + (level - 1) * xpStep, summed per level. */
+  xpBase: 5,
+  xpStep: 5,
+  /** Level-up cards, and reroll attempts before the offer is called unchanged. */
+  pickCount: 3,
+  rerollTries: 8,
 } as const;
 
 /**
@@ -80,9 +123,11 @@ export interface Pool {
   readonly age: Float32Array;
   /** Seconds of flight left; reaching 0 retires the slot. */
   readonly life: Float32Array;
-  /** Index into the pool's content table. */
+  /** Index into the pool's content table: weapon for shots, archetype for
+   * enemies and shards (a shard's XP comes from the enemy it came off). */
   readonly kind: Uint16Array;
-  /** Behaviour state-machine slot. */
+  /** Behaviour state-machine slot: stagger ticks for enemies, shots a
+   * projectile may still land. */
   readonly state: Uint16Array;
 }
 
@@ -127,6 +172,32 @@ export interface Player {
   alive: boolean;
 }
 
+/**
+ * One weapon hand. Ammo is a count rather than a pool because a magazine is
+ * small and the HUD reads it directly.
+ */
+export interface WeaponSlot {
+  /** Index into the WEAPONS table; -1 is an empty hand. */
+  weapon: number;
+  ammo: number;
+  /** Seconds until this hand may fire again. */
+  cooldown: number;
+  /** Seconds of reload left. Above 0 the hand cannot fire. */
+  reload: number;
+}
+
+/** Timer-driven spawn state for the current chapter. */
+export interface WaveState {
+  /** False until the game starts a chapter, so an idle World spawns nothing. */
+  running: boolean;
+  /** Wave number within the chapter; difficulty keys off it. */
+  index: number;
+  /** Seconds left in this wave; at 0 the index ticks up. */
+  timeLeft: number;
+  /** Seconds until the next spawn batch. */
+  timer: number;
+}
+
 export interface World {
   readonly seed: number;
   rng: Rng;
@@ -139,11 +210,37 @@ export interface World {
   kills: number;
   /** Chapter index, 0-based. */
   chapter: number;
+  /** The run is over: the player died, so the game shows the summary. */
+  over: boolean;
+  /**
+   * Whether the player holds down the fire button (click-to-fire) or the sim
+   * shoots on its own. Off here because it is a setting, not a sim default:
+   * the game layer turns it on from `neonhorde.settings.v1`, where TECH.md pins
+   * the shipped default of on.
+   */
+  autoFire: boolean;
+  /** Distance to the closest live enemy, Infinity when the arena is empty.
+   * Refreshed by the enemy pass and read by the auto-fire decision. */
+  enemyNear: number;
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
   player: Player;
+  /** Two hands, index `activeSlot` being the one that fires. */
+  slots: WeaponSlot[];
+  activeSlot: number;
+  /** Tier per POWERUPS index; 0 means not owned. */
+  powerTiers: Uint8Array;
+  /** Multipliers folded from powerTiers; see recomputeStats in systems/pickups. */
+  stats: StatBlock;
+  /** A level-up offer is waiting; the game freezes the sim and shows the cards. */
+  pendingLevelUp: boolean;
+  /** POWERUPS indices for the three cards, -1 for an empty slot. */
+  levelUpChoices: Int32Array;
+  /** One reroll per level-up, spent or not. */
+  rerollUsed: boolean;
+  wave: WaveState;
   enemies: Pool;
   shots: Pool;
   enemyShots: Pool;
@@ -222,6 +319,12 @@ export function countAlive(p: Pool): number {
   return n;
 }
 
+/** A hand holding `weaponIndex`, loaded when there is a gun to load. */
+function createSlot(weaponIndex: number): WeaponSlot {
+  const mag = weaponIndex >= 0 ? WEAPONS[weaponIndex].ammo.mag : 0;
+  return { weapon: weaponIndex, ammo: mag, cooldown: 0, reload: 0 };
+}
+
 export function createWorld(seed: number, opts: WorldOptions = {}): World {
   const half = opts.arenaHalf ?? 60;
   const cell = opts.hashCell ?? TUNE.hashCell;
@@ -241,6 +344,9 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     score: 0,
     kills: 0,
     chapter: 0,
+    over: false,
+    autoFire: false,
+    enemyNear: Infinity,
     minX,
     minY,
     maxX,
@@ -263,6 +369,21 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
       aimX: 1,
       aimY: 0,
       alive: true,
+    },
+    // Slot 0 holds the starting pistol (WEAPONS[0]); the second hand stays empty
+    // until a chest or a level-up fills it.
+    slots: [createSlot(0), createSlot(-1)],
+    activeSlot: 0,
+    powerTiers: new Uint8Array(POWERUPS.length),
+    stats: baseStats(),
+    pendingLevelUp: false,
+    levelUpChoices: new Int32Array(3),
+    rerollUsed: false,
+    wave: {
+      running: false,
+      index: 1,
+      timeLeft: TUNE.waveLength,
+      timer: TUNE.firstBatchDelay,
     },
     enemies: createPool('enemies', enemyCap),
     shots: createPool('shots', opts.projectiles ?? POOL_CAPS.projectiles),

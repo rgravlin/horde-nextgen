@@ -10,6 +10,10 @@
 
 import type { InputFrame } from './input';
 import { queryRadius, rebuild } from './spatialHash';
+import { updateEnemies } from './systems/enemies';
+import { choosePick, updatePickups } from './systems/pickups';
+import { updateWeapons } from './systems/weapons';
+import { updateWaves } from './systems/waves';
 import { DT, Ev, TUNE, pushEvent, type World } from './world';
 
 /** Below this length an input or direction vector counts as zero. */
@@ -18,10 +22,16 @@ const EPS = 1e-6;
 /**
  * Advance the world by one tick.
  *
- * Order: timers -> player movement and dash -> (later: waves, enemy AI, weapon
- * fire, projectiles) -> broad-phase rebuild -> (later: collisions and damage,
- * pickups, deaths). The grid is rebuilt after everything has moved, so the
- * collision pass reads a grid that matches the positions it is about to test.
+ * Order: timers -> player movement and dash -> broad-phase rebuild -> enemy
+ * behaviours and contact damage -> weapon fire, projectile movement and damage
+ * (a kill is resolved where the damage lands) -> the level-up pick -> pickups and
+ * XP -> wave spawns. The grid is built before the passes that query it rather than
+ * after, so the collision and separation tests read a grid that matches the
+ * positions they are about to test, minus at most one tick of travel — which their
+ * query radius pads for.
+ *
+ * Once the run is over nothing simulates: the tick that killed the player still
+ * resolves its shots, and after that the world waits for the summary screen.
  */
 export function step(world: World, frame: InputFrame): void {
   world.tick++;
@@ -29,11 +39,15 @@ export function step(world: World, frame: InputFrame): void {
 
   updateTimers(world);
   updatePlayer(world, frame);
-
-  // System gaps left for later tasks, in the order ARCHITECTURE.md fixes them:
-  // enemy steering and behaviours (which read the grid built below), then weapon
-  // fire and projectile movement, then collisions and damage.
   rebuild(world.hash, world.enemies.x, world.enemies.y, world.enemies.alive, world.enemies.cap);
+
+  if (world.over) return;
+
+  updateEnemies(world);
+  updateWeapons(world, frame);
+  if (frame.pick > 0) choosePick(world, frame.pick - 1);
+  updatePickups(world);
+  updateWaves(world);
 }
 
 /** Tick down every cooldown and timer, before anything reads them. */
