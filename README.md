@@ -106,10 +106,12 @@ telegraph ring was drawn. Both respect the player's i-frames — against an invu
 player a round passes through rather than being absorbed — and a telegraphed attack always
 buys the player the DESIGN.md 400 ms of warning before it lands.
 
-To make the archetype actually *arrive*, add its id to a `PACKS` row: the wave spawner
-walks those recipes in order, so a chapter's mix is knowable rather than drawn from luck.
-Which row you edit is a real choice — the browser scenarios only play the first waves, so
-a body put into the early rows changes what a scenario (and a new player) meets first.
+To make the archetype actually *arrive*, it has to be in the chapter's data two ways at most:
+in a `PACKS` row (the drumbeat, which fills the gaps and walks those recipes in order, so a
+chapter's mix is knowable rather than drawn from luck) and, for the moments you want at a
+second you choose, in that chapter's `waves` script. Which row you edit is a real choice — the
+browser scenarios only play the first waves, so a body put into the early rows changes what a
+scenario (and a new player) meets first.
 `accent` is the body's emissive core colour — the renderer reads it per archetype; bodies
 themselves stay dark matte (DESIGN.md "Palette").
 
@@ -145,3 +147,28 @@ is dropped and a chapter may not open by charging the player for the floor he wa
 `tests/unit/obstacles.test.ts` fails a chapter that drops him inside cover or standing in a
 pool — and the twelve metres straight down +x from it, which the browser scenarios walk with
 a held key.
+
+**The wave script.** Beside the floor plan a chapter writes what happens on it:
+
+| field | what the sim does with it |
+|---|---|
+| `waves` | timed packs, authored with `beat(t, edge, …)` and `eliteBeat(t, edge, elite, …)`. Each lands at second `t` on the clock the chapter starts at zero, from `edge` — one of `any`, `e`, `w`, `n`, `s`, `ne`, `nw`, `se`, `sw`, all read relative to the player — with every body it names put down around one landing point so it arrives as one thing. `elite` puts that variant on the whole pack, which beats the per-body roll |
+| `duration` | where the script stops and the chapter's `bosses` walk in, escorted by the last row of `packs` |
+| `difficulty` | two dials that multiply into one number. `spawnRate` divides the gap between drumbeat batches (it divides the whole curve, so a hard chapter is meaner from its first batch, not only once the waves have wound up); `hp` multiplies the HP of every body the spawner puts down, script and drumbeat alike |
+
+Between the beats the fill runs: a batch every `1.4 × 0.88^(wave−1)` seconds (floor 0.3 s, then
+divided by `spawnRate`), sized 1 → 12 by the wave index, drawing straight down `packs` and
+starting each batch where the last one stopped. Both halves are data, so the fifth body of a
+chapter's second batch is the same archetype in every run at every seed.
+
+A landing point is chosen **outside the view rect and off cover**: 32×18 m around the player is
+never offered as a spawn point, and `pointBlocked` is asked before anything is spawned rather
+than a body being shoved out of a wall afterwards — pushed out of a wall, a body arrives
+somewhere the script never pointed at. If the edge a beat names has no clear floor, the pack is
+retried on the next tick for half a second and then given up on and counted in `wave.skips`, so
+a chapter that lost a set piece can be found. `tests/unit/waves.test.ts` walks all ten
+layouts, second by second, and names the chapter, second, archetype and position of any body
+that came down inside cover or inside the eyeline. When you write a beat, leave it at least
+eight seconds inside `duration` and remember the pool stops at 2,048 bodies: a chapter that
+runs longer or spawns faster than its neighbours needs its `spawnRate` checked against a run,
+not against the table.

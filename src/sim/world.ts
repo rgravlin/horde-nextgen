@@ -409,6 +409,30 @@ export interface WaveState {
    */
   cursor: number;
   /**
+   * Seconds of the chapter's script spent, counted from the moment its clock started. A
+   * scripted pack's `t` in `content/levels.ts` is a number on this clock, and a chapter's
+   * `duration` is where the clock stops and the encounter walks in — which is why it is a
+   * second count rather than another way of saying which wave it is on.
+   */
+  elapsed: number;
+  /**
+   * Index of the next scripted pack to land. Walked one pack at a time, so a pack whose
+   * landing point was refused gets retried on a later tick instead of being skipped for the
+   * rest of the chapter.
+   */
+  script: number;
+  /**
+   * Ticks the pack at `script` has been refused a landing point for. It counts down to giving
+   * up rather than to a search: a blocked edge delays its chapter's set pieces, it must not
+   * delete the rest of them. Reset when a pack lands or is given up on.
+   */
+  tries: number;
+  /**
+   * Scripted packs given up on after `tries` ran out. Nothing else in the sim can see that a
+   * chapter quietly lost one of its set pieces, so it is counted here — and asserted on.
+   */
+  skips: number;
+  /**
    * Where the chapter is in its own arc, which is not the same question as which wave
    * it is on. See `Phase` in `systems/levels.ts`: the drumbeat runs during the script,
    * stops when the chapter's encounter walks in, and the chapter is over when the
@@ -707,6 +731,10 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
       timeLeft: TUNE.waveLength,
       timer: TUNE.firstBatchDelay,
       cursor: 0,
+      elapsed: 0,
+      script: 0,
+      tries: 0,
+      skips: 0,
       phase: 0,
       clearTime: 0,
     },

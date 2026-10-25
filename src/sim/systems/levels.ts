@@ -9,7 +9,7 @@
  *   call, from `content/levels.ts`. A fresh `World` has no geometry, and a chapter is the
  *   only door that puts any down — the same reason an idle world spawns nothing: every test
  *   fixture and the paused arena are expected to be *empty*, not quietly chapter 1.
- * - **The arc.** The drumbeat runs for the chapter's authored wave count, then stops and the
+ * - **The arc.** The drumbeat runs for the chapter's authored `duration`, then stops and the
  *   encounter walks in. A chapter that escalated forever was not a level, it was a timer.
  * - **The end.** Killing the encounter is how a chapter is cleared; the next one loads with
  *   its own floor and its own mix, and the run keeps going until the player dies or the last
@@ -166,7 +166,7 @@ export function updateLevels(w: World): void {
   tickHazards(w);
 
   if (wave.phase === Phase.Script) {
-    if (wave.index > level.waves) startEncounter(w, level);
+    if (wave.elapsed >= level.duration) startEncounter(w, level);
     return;
   }
 

@@ -5,35 +5,47 @@
  * things the simulation reads and therefore the things a player can feel and a test can pin.
  * The floor plan is boxes in world metres, installed into `sim/props.ts` when the chapter
  * starts and read back by the player's movement, every enemy's travel step, every round in
- * the air and the renderer's cover pass. The wave script is a recipe walked straight down.
- * The encounter at the end is a body from `content/enemies.ts` marked `boss`.
+ * the air and the renderer's cover pass. The wave script is a list of timed packs with a
+ * drumbeat fill underneath it, both read by `sim/systems/waves.ts`. The encounter at the end
+ * is a body from `content/enemies.ts` marked `boss`.
  *
  * Three rules the shape of this file exists to keep:
  *
  * - **The floor is the same shape for everyone.** Boxes are authored once and never moved,
  *   so a corridor is a fact about the chapter rather than about the seed, and a run replayed
  *   at the same seed walks the same rooms.
- * - **A recipe is knowable.** Each row is read straight down by `systems/waves.ts`, so the
- *   fifth body of wave 1 is the same archetype in every run on every seed. A weighted bag
- *   would make "does this chapter ever show you a charger" luck, which neither a browser
- *   scenario nor a player can learn from.
- * - **The ramp is in the data.** Later rows carry the bodies that punish standing still and
- *   the supports that make a pack take longer to die than its HP says, so the climb is
- *   something you can read off the page rather than tune by feel in code.
+ * - **A script is knowable.** Each pack lands at a second and from a side, and the fill walks
+ *   its recipe straight down, so the fifth body of wave 1 is the same archetype in every run on
+ *   every seed. A weighted bag would make "does this chapter ever show you a charger" luck,
+ *   which neither a browser scenario nor a player can learn from.
+ * - **The ramp is in the data.** Later chapters carry the bodies that punish standing still and
+ *   the supports that make a pack take longer to die than its HP says, and they carry them
+ *   faster and tougher — one `difficulty` pair per chapter, so the climb is something you can
+ *   read off the page rather than tune by feel in code.
  *
- * Chapter 1's rows are the ones `content/enemies.ts` shipped with and the browser scenarios
- * assert against, so they are imported rather than copied: one source of truth (AGENTS.md),
- * and a recipe a test pins cannot drift away from the test.
+ * Chapter 1's recipes are the ones `content/enemies.ts` shipped with and the browser scenarios
+ * assert against, so they are imported rather than copied: one source of truth (AGENTS.md), and
+ * a recipe a test pins cannot drift away from the test.
  *
- * What a chapter carries beyond the recipe is the room itself: a floor size, a fog and
+ * What a chapter carries beyond the script is the room itself: a floor size, a fog and
  * key-light tint, the cover and the hazards. Every one of those is read by something — the
  * arena by the chapter's own installation, the tint by the renderer's fog and key light, the
  * boxes and circles by `sim/systems/obstacles.ts` — because a field nothing consults is the
  * same kind of lie as a `corridor` field with no geometry behind it.
+ *
+ * **On chapter length.** `duration` is seconds of script before the encounter walks in, and the
+ * ten chapters run 78 to 96 s of it — thirteen to sixteen minutes of campaign. That is shorter
+ * than a five-minute stage, and the reason is the fill: the drumbeat's batches grow with the
+ * wave index while its gap shrinks, so a chapter's second half is a rate rather than a cap, and
+ * a stage that ran to five minutes would spend its last third trying to spawn into a full
+ * 2,048-body pool. Lengthening a chapter means slowing that curve in the same edit, and
+ * `tests/unit/obstacles.test.ts` — which runs a chapter out to its encounter inside a tick
+ * budget — is the check that says so first.
  */
 
 import { PACKS } from './enemies';
 import { PropKind, ZoneKind } from '../sim/systems/obstacles';
+import type { EdgeId } from '../sim/systems/waves';
 
 /**
  * An elite variant: a modifier applied to an archetype, never an archetype of its own.
@@ -183,16 +195,81 @@ const DOCKS: PaletteDef = { fog: '#0B1D20', key: '#9FD9E4' };
 const FOUNDRY: PaletteDef = { fog: '#1A1206', key: '#F2B233' };
 const REACTOR: PaletteDef = { fog: '#150C22', key: '#B48CFF' };
 
+/**
+ * One scripted pack: what arrives, at what second, from which side, and — in the chapters that
+ * roll variants — what it arrives wearing.
+ *
+ * `t` is seconds on the chapter's own clock, which `WaveState.elapsed` counts, rather than a
+ * wave number. The set pieces of a level are timed and not counted: the armoured wedge at 0:52
+ * lands in the same second at every seed, which is the property that makes a level authored
+ * rather than drawn, and the property a test can pin.
+ *
+ * `edge` is a direction and not a position. `systems/waves.ts` picks a point on that side of the
+ * view rect, keeps it off cover, and falls back to another side if the one it was handed has no
+ * clear floor anywhere along it — so a chapter that wants a chokepoint to be the only way in
+ * builds a chokepoint, and a pack that cannot fit is rerouted instead of dropped inside a wall.
+ *
+ * `elite` is applied to every body in the pack. It exists because a variant the player meets by
+ * chance at 5% is texture, while a variant a chapter *sends* is a wave to be answered.
+ */
+export interface BeatDef {
+  readonly t: number;
+  /** `[archetype id, count]` pairs, in the order they are put down. */
+  readonly pack: readonly (readonly [string, number])[];
+  readonly edge: EdgeId;
+  readonly elite?: string;
+}
+
+/**
+ * The chapter's two dials, written down once instead of derived from which chapter it is.
+ *
+ * `spawnRate` divides the gap between drumbeat batches and `hp` multiplies the HP of every body
+ * the chapter puts down. They stay two numbers because they are two different problems for the
+ * player — a faster drumbeat asks where you are standing, tougher bodies ask what you are
+ * holding — and because a pair is what a test can read: `tests/unit/waves.test.ts` checks the
+ * product rises from chapter to chapter, which catches a dial edited to look like progress while
+ * doing only half the job.
+ */
+export interface DifficultyDef {
+  /** Divisor on the seconds between drumbeat batches. 1 is chapter 1's own curve. */
+  readonly spawnRate: number;
+  /** Multiplier on the HP of every body the chapter's script or fill puts down. */
+  readonly hp: number;
+}
+
 export interface LevelDef {
   readonly id: string;
   /** Shown in the HUD's top-centre panel. */
   readonly name: string;
   /**
-   * Wave recipes, one row per wave, carried on past the end of the list by the last row. A
-   * row is read straight down and the next wave starts where this one stopped, so the mix is
-   * a fact about the chapter rather than about the seed.
+   * The drumbeat recipe: one row per wave, carried on past the end of the list by the last
+   * row. A row is read straight down and the next wave starts where the last one stopped (see
+   * `WaveState.cursor`), so the mix is a fact about the chapter rather than about the seed.
+   *
+   * This is what fills the gaps the script leaves below; `waves` is what marks them.
    */
   readonly packs: readonly (readonly string[])[];
+  /**
+   * The chapter's wave script: packs it authored, in seconds on the chapter's own clock.
+   *
+   * Read straight down by `systems/waves.ts` at the same seconds in every run, which is what
+   * lets a scenario pin a chapter and a player learn one. A beat is a set piece; the recipe
+   * above is the pressure between set pieces, and the two run beside each other.
+   */
+  readonly waves: readonly BeatDef[];
+  /**
+   * Seconds of drumbeat before the encounter walks in.
+   *
+   * The script lives inside this window — a beat timed after the duration would never land —
+   * so a chapter's last beats are written just short of its own end.
+   */
+  readonly duration: number;
+  /**
+   * How hard this chapter is, in the two dials the spawner reads: how often it puts bodies
+   * down and how much those bodies cost. Defined here, once, rather than derived from which
+   * chapter number it is, so the ramp is readable on the page and testable as a product.
+   */
+  readonly difficulty: DifficultyDef;
   /** Elite variants this chapter rolls, by id. */
   readonly elites: readonly string[];
   /**
@@ -205,12 +282,6 @@ export interface LevelDef {
    * draws no random numbers at all.
    */
   readonly eliteChance: number;
-  /**
-   * Waves of drumbeat before the encounter walks in. Eight at a 12 s wave is 96 s of
-   * escalation, which is roughly the length of run DESIGN.md wants before a chapter changes
-   * what it is asking of you.
-   */
-  readonly waves: number;
   /**
    * The bodies the chapter ends on, by archetype id.
    *
@@ -273,14 +344,46 @@ function pillar(x: number, y: number, r = 1.25): PropDef {
   return { kind: PropKind.Pillar, x, y, w: r * 2, h: r * 2, r };
 }
 
+/**
+ * Script shorthand: `count` of each named archetype, landing at second `t` off `edge`.
+ *
+ * Written as a call rather than an object literal so a chapter's script reads as a timetable
+ * down the page — eight beats a chapter is a lot of rows, and the rows are the point.
+ */
+function beat(t: number, edge: EdgeId, ...pack: (readonly [string, number])[]): BeatDef {
+  return { t, edge, pack };
+}
+
+/** Script shorthand for a pack the chapter *sends* in one named variant. */
+function eliteBeat(t: number, edge: EdgeId, elite: string, ...pack: (readonly [string, number])[]): BeatDef {
+  return { t, edge, elite, pack };
+}
+
 export const LEVELS: readonly LevelDef[] = [
   {
     id: 'loading-bay',
     name: 'Loading Bay',
     packs: PACKS,
+    // The teaching order, timed. Swarmling clouds first (an area weapon's lesson), then the
+    // splitter at 0:20 — deliberately seven seconds before the recipe reaches it at wave 3,
+    // because the bay is where a player is supposed to meet "kill it away from the crowd" once
+    // and alone. The charger comes in off the open +x gate, where a charge line has fourteen
+    // metres of floor to run down and no crate to start behind. Everything after 0:40 is a
+    // mix rather than a body, which is what the bay hands over to the yard.
+    waves: [
+      beat(12, 'any', ['swarmling', 12]),
+      beat(20, 'any', ['splitter', 5]),
+      beat(26, 'e', ['charger', 4]),
+      beat(34, 'nw', ['exploder', 8]),
+      beat(42, 'w', ['shooter', 5], ['chaser', 10]),
+      beat(50, 'any', ['armored', 6], ['charger', 6]),
+      beat(58, 'se', ['grenadier', 4], ['shooter', 4], ['chaser', 12]),
+      beat(66, 'any', ['splitter', 6], ['exploder', 8], ['swarmling', 18]),
+    ],
+    duration: 78,
+    difficulty: { spawnRate: 1, hp: 1 },
     elites: [],
     eliteChance: 0,
-    waves: 6,
     bosses: ['broodmother'],
     size: 60,
     palette: DOCKS,
@@ -309,11 +412,28 @@ export const LEVELS: readonly LevelDef[] = [
       ['splitter', 'armored', 'grenadier', 'charger', 'healer', 'exploder', 'splitter'],
       ['armored', 'grenadier', 'splitter', 'charger', 'shooter', 'healer', 'exploder'],
     ],
+    // The lanes are the script's subject. Two beats come down the conveyor itself (`n` and
+    // `s`), so a pack arrives along a lane instead of across the yard, and the rest spread.
+    // The bulwark pack at 1:06 is the variant's introduction: five armoured bodies and a
+    // dozen chasers, arriving over the corner tank, which is the first pack in the game that
+    // has to be answered by moving rather than by pulling the trigger.
+    waves: [
+      beat(10, 'any', ['swarmling', 10], ['charger', 4]),
+      beat(18, 'n', ['exploder', 6], ['chaser', 8]),
+      beat(26, 'any', ['charger', 5], ['shooter', 4]),
+      beat(34, 's', ['swarmling', 16], ['exploder', 6]),
+      beat(42, 'e', ['armored', 5], ['charger', 4]),
+      beat(50, 'any', ['splitter', 6], ['exploder', 6], ['shooter', 4]),
+      beat(58, 'n', ['charger', 6], ['healer', 3], ['exploder', 6]),
+      eliteBeat(66, 'nw', 'bulwark', ['armored', 5], ['chaser', 8]),
+      beat(74, 'any', ['exploder', 8], ['charger', 6], ['healer', 4]),
+    ],
+    duration: 82,
+    difficulty: { spawnRate: 1.12, hp: 1.08 },
     elites: ['bulwark'],
     // A whisper of a chance: one bulwark in a wave is a thing to notice, which is the whole
     // job of a variant's introduction.
     eliteChance: 0.05,
-    waves: 6,
     bosses: ['broodmother'],
     size: 54,
     palette: FOUNDRY,
@@ -349,9 +469,27 @@ export const LEVELS: readonly LevelDef[] = [
       ['grenadier', 'armored', 'healer', 'splitter', 'charger', 'shooter', 'armored'],
       ['armored', 'grenadier', 'splitter', 'exploder', 'charger', 'healer', 'armored'],
     ],
+    // Armour from the first beat, and the two long walls decide the edges: the canal's packs
+    // come in off `e` and `w`, through the twelve-metre gaps at either end, so the armoured
+    // wedge runs the length of the room instead of dropping into the pools beside the player.
+    // The two elite beats are the chapter's argument for existing — a bulwark column up the
+    // middle at 0:56 and a frenzy channel down the south wall at 1:12, both of which are
+    // answered by giving ground, which is what the canal's shape is for.
+    waves: [
+      beat(8, 'any', ['armored', 4], ['chaser', 8]),
+      beat(16, 'e', ['charger', 5], ['armored', 4]),
+      beat(24, 'any', ['swarmling', 14], ['shooter', 4]),
+      beat(32, 'w', ['armored', 5], ['exploder', 6]),
+      beat(40, 'any', ['splitter', 6], ['armored', 5]),
+      beat(48, 'e', ['grenadier', 4], ['charger', 5], ['armored', 4]),
+      eliteBeat(56, 'any', 'bulwark', ['armored', 6], ['healer', 3]),
+      beat(64, 'nw', ['exploder', 8], ['splitter', 5], ['chaser', 10]),
+      eliteBeat(72, 's', 'frenzy', ['chaser', 10], ['swarmling', 14]),
+    ],
+    duration: 84,
+    difficulty: { spawnRate: 1.22, hp: 1.16 },
     elites: ['bulwark', 'frenzy'],
     eliteChance: 0.08,
-    waves: 6,
     bosses: ['atlas'],
     size: 50,
     palette: FOUNDRY,
@@ -384,9 +522,26 @@ export const LEVELS: readonly LevelDef[] = [
       ['grenadier', 'splitter', 'armored', 'shooter', 'exploder', 'healer', 'charger'],
       ['splitter', 'armored', 'grenadier', 'exploder', 'splitter', 'charger', 'healer'],
     ],
+    // Four pods with a doorway in each, and the corner beats drop splitters into them: a
+    // splitter that dies in a pod hatches four splinters in a room with one way out, which is
+    // the deck's lesson, timed four times rather than rolled. The two straight-through beats
+    // (`any`) are the ones that arrive while the player is still standing in the open middle,
+    // and the frenzy pack at 0:58 is the answer to anyone who stops moving to watch for them.
+    waves: [
+      beat(10, 'any', ['swarmling', 12], ['splitter', 4]),
+      beat(18, 'nw', ['splitter', 6], ['chaser', 8]),
+      beat(26, 'se', ['exploder', 6], ['splitter', 5]),
+      beat(34, 'any', ['shooter', 5], ['splitter', 6]),
+      beat(42, 'ne', ['charger', 5], ['splitter', 6], ['exploder', 5]),
+      beat(50, 'sw', ['armored', 5], ['splitter', 6]),
+      eliteBeat(58, 'any', 'frenzy', ['charger', 5], ['chaser', 8]),
+      beat(66, 'nw', ['splitter', 7], ['grenadier', 4], ['healer', 3]),
+      beat(74, 'any', ['armored', 5], ['splitter', 7], ['exploder', 6], ['charger', 4]),
+    ],
+    duration: 84,
+    difficulty: { spawnRate: 1.32, hp: 1.24 },
     elites: ['bulwark', 'frenzy'],
     eliteChance: 0.1,
-    waves: 7,
     bosses: ['broodmother', 'broodmother'],
     size: 52,
     palette: DOCKS,
@@ -421,9 +576,26 @@ export const LEVELS: readonly LevelDef[] = [
       ['armored', 'exploder', 'grenadier', 'splitter', 'healer', 'charger', 'exploder'],
       ['grenadier', 'exploder', 'armored', 'splitter', 'charger', 'shooter', 'healer'],
     ],
+    // The detonations are timed against the room's two crushers. Ten exploders arrive at 0:08
+    // and eight at every beat to 0:44, because the chapter's answer is to shoot them somewhere
+    // other than on top of you, and the ring of vessels with two gaps is where "somewhere
+    // other" has to be found. The volatile packs price the same lesson up: a volatile exploder
+    // is a body you want dead down a lane, not in the middle.
+    waves: [
+      beat(8, 'any', ['exploder', 10], ['chaser', 8]),
+      beat(18, 'e', ['exploder', 8], ['charger', 4]),
+      beat(26, 'any', ['swarmling', 16], ['exploder', 8]),
+      beat(34, 'w', ['armored', 5], ['exploder', 8], ['shooter', 4]),
+      beat(44, 'n', ['grenadier', 4], ['exploder', 8], ['charger', 5]),
+      eliteBeat(54, 'any', 'volatile', ['exploder', 8], ['chaser', 6]),
+      beat(62, 'se', ['splitter', 6], ['exploder', 8], ['healer', 3]),
+      eliteBeat(70, 'nw', 'bulwark', ['armored', 6], ['exploder', 6]),
+      beat(78, 'any', ['exploder', 10], ['charger', 6], ['grenadier', 4], ['healer', 3]),
+    ],
+    duration: 86,
+    difficulty: { spawnRate: 1.4, hp: 1.32 },
     elites: ['bulwark', 'frenzy', 'volatile'],
     eliteChance: 0.12,
-    waves: 7,
     bosses: ['matron'],
     size: 46,
     palette: REACTOR,
@@ -459,9 +631,26 @@ export const LEVELS: readonly LevelDef[] = [
       ['armored', 'swarmling', 'exploder', 'splitter', 'charger', 'grenadier', 'healer'],
       ['splitter', 'charger', 'armored', 'swarmling', 'exploder', 'healer', 'shooter'],
     ],
+    // Clouds, not packs: twenty-four bodies at a time, eight times over the chapter, because
+    // the thread floor is the chapter that asks what you are holding. The pillar lattice is
+    // what makes that answerable — a cloud that has to come between two pillars arrives in
+    // twos — and the `any` beats are the ones that arrive from everywhere at once, which is
+    // what a chapter with no cover in its middle is for.
+    waves: [
+      beat(8, 'any', ['swarmling', 20], ['chaser', 6]),
+      beat(18, 'n', ['swarmling', 24], ['charger', 4]),
+      beat(28, 'sw', ['swarmling', 22], ['exploder', 5], ['shooter', 4]),
+      beat(38, 'any', ['chaser', 12], ['swarmling', 20]),
+      beat(48, 'ne', ['charger', 6], ['swarmling', 22]),
+      beat(56, 'any', ['armored', 5], ['swarmling', 24], ['shooter', 4]),
+      eliteBeat(64, 'nw', 'frenzy', ['charger', 6], ['chaser', 10]),
+      beat(72, 'se', ['splitter', 6], ['exploder', 6], ['swarmling', 20], ['healer', 3]),
+      beat(80, 'any', ['swarmling', 26], ['charger', 6], ['armored', 4], ['grenadier', 4]),
+    ],
+    duration: 88,
+    difficulty: { spawnRate: 1.48, hp: 1.4 },
     elites: ['frenzy', 'volatile'],
     eliteChance: 0.14,
-    waves: 7,
     bosses: ['matron', 'matron'],
     size: 60,
     palette: DOCKS,
@@ -498,9 +687,26 @@ export const LEVELS: readonly LevelDef[] = [
       ['healer', 'armored', 'grenadier', 'exploder', 'shooter', 'splitter', 'armored'],
       ['grenadier', 'armored', 'exploder', 'shooter', 'healer', 'splitter', 'charger'],
     ],
+    // Nothing arrives in the open here. Every beat names a side the pinwheel's faces sit
+    // across, so a pack either comes through a door or has to walk around a wall to get to the
+    // middle, and the two `any` beats are the chapter asking you to read two things at once.
+    // The vault's own argument, in data: no chaff, and the elites start carrying bodies rather
+    // than tints — bulwark armour at 0:54 and a volatile pack at 1:10.
+    waves: [
+      beat(8, 'any', ['armored', 5], ['shooter', 4]),
+      beat(18, 'e', ['armored', 5], ['grenadier', 4]),
+      beat(28, 'any', ['exploder', 8], ['armored', 5]),
+      beat(36, 'nw', ['splitter', 6], ['shooter', 5], ['healer', 3]),
+      beat(46, 'se', ['armored', 6], ['charger', 5]),
+      eliteBeat(54, 'any', 'bulwark', ['armored', 6], ['healer', 3]),
+      beat(62, 'n', ['grenadier', 5], ['exploder', 8], ['splitter', 5]),
+      eliteBeat(70, 's', 'volatile', ['exploder', 8], ['chaser', 8]),
+      beat(78, 'any', ['armored', 6], ['splitter', 6], ['shooter', 5], ['healer', 3]),
+    ],
+    duration: 90,
+    difficulty: { spawnRate: 1.56, hp: 1.48 },
     elites: ['bulwark', 'frenzy', 'volatile'],
     eliteChance: 0.16,
-    waves: 8,
     bosses: ['atlas'],
     size: 48,
     palette: FOUNDRY,
@@ -537,9 +743,26 @@ export const LEVELS: readonly LevelDef[] = [
       ['armored', 'grenadier', 'healer', 'exploder', 'splitter', 'shooter', 'charger'],
       ['exploder', 'armored', 'splitter', 'grenadier', 'charger', 'shooter', 'healer'],
     ],
+    // The aisles run east-west, so the ranged beats are given `e` and `w`: a shooter volley
+    // arrives down an aisle with a clear sight and a six-metre door to be answered through.
+    // The chargers then get the two beats that land in the open water between the plates,
+    // where a charge line is worth something, and the frenzy pack at 0:56 is the one that
+    // arrives while the player is still looking east.
+    waves: [
+      beat(8, 'e', ['shooter', 6], ['chaser', 8]),
+      beat(18, 'any', ['armored', 5], ['charger', 5]),
+      beat(28, 'w', ['grenadier', 5], ['shooter', 5]),
+      beat(38, 'e', ['splitter', 6], ['armored', 5]),
+      beat(46, 'any', ['exploder', 8], ['charger', 5], ['shooter', 4]),
+      eliteBeat(56, 'n', 'frenzy', ['charger', 6], ['swarmling', 14]),
+      beat(64, 'w', ['armored', 6], ['healer', 3], ['grenadier', 4]),
+      beat(74, 'any', ['splitter', 6], ['exploder', 8], ['shooter', 5]),
+      eliteBeat(82, 'any', 'volatile', ['exploder', 8], ['armored', 5]),
+    ],
+    duration: 92,
+    difficulty: { spawnRate: 1.64, hp: 1.56 },
     elites: ['bulwark', 'frenzy', 'volatile'],
     eliteChance: 0.18,
-    waves: 8,
     bosses: ['matron', 'atlas'],
     size: 52,
     palette: REACTOR,
@@ -571,9 +794,25 @@ export const LEVELS: readonly LevelDef[] = [
       ['charger', 'armored', 'grenadier', 'exploder', 'charger', 'healer', 'shooter'],
       ['splitter', 'charger', 'armored', 'grenadier', 'charger', 'exploder', 'healer'],
     ],
+    // Charger volleys, six and seven strong, timed down the two berths and across the open
+    // water between them. A charge is only a threat with a run-up, so the beats that name a
+    // side are the ones that land in an aisle and the `any` beats are the ones that land on
+    // the plates — which is the chapter's price for standing still in the short line across.
+    waves: [
+      beat(8, 'any', ['charger', 6], ['chaser', 8]),
+      beat(18, 'n', ['charger', 6], ['shooter', 4]),
+      beat(28, 'any', ['armored', 5], ['exploder', 6]),
+      beat(38, 's', ['charger', 7], ['swarmling', 14]),
+      beat(48, 'w', ['splitter', 6], ['charger', 5], ['shooter', 4]),
+      eliteBeat(56, 'e', 'frenzy', ['charger', 7], ['chaser', 8]),
+      beat(64, 'any', ['armored', 6], ['healer', 3], ['exploder', 6]),
+      beat(74, 'n', ['charger', 6], ['grenadier', 5], ['splitter', 5]),
+      eliteBeat(84, 'any', 'bulwark', ['armored', 6], ['charger', 5]),
+    ],
+    duration: 94,
+    difficulty: { spawnRate: 1.72, hp: 1.64 },
     elites: ['bulwark', 'frenzy'],
     eliteChance: 0.16,
-    waves: 8,
     bosses: ['atlas', 'broodmother'],
     size: 54,
     palette: DOCKS,
@@ -609,9 +848,26 @@ export const LEVELS: readonly LevelDef[] = [
       ['armored', 'grenadier', 'healer', 'exploder', 'splitter', 'shooter', 'charger', 'exploder'],
       ['exploder', 'armored', 'splitter', 'grenadier', 'charger', 'shooter', 'healer', 'armored'],
     ],
+    // Nine beats, every archetype the drumbeat is allowed to carry, and the two elite packs
+    // at 0:56 and 1:24 that arrive on either side of the cross rather than down it. Nothing
+    // here is new and none of it is fair in a room with nowhere to put anything down: the last
+    // chapter is every lesson at once, which is why its script is the only one that names
+    // three things in a pack four times over.
+    waves: [
+      beat(8, 'any', ['armored', 5], ['charger', 5], ['chaser', 8]),
+      beat(18, 'ne', ['exploder', 8], ['shooter', 5]),
+      beat(28, 'any', ['splitter', 6], ['armored', 5], ['grenadier', 4]),
+      beat(38, 'sw', ['charger', 6], ['healer', 3], ['exploder', 6]),
+      beat(48, 'any', ['armored', 6], ['shooter', 5], ['splitter', 5]),
+      eliteBeat(56, 'nw', 'volatile', ['exploder', 8], ['chaser', 8]),
+      beat(64, 'se', ['charger', 6], ['armored', 5], ['healer', 3], ['grenadier', 4]),
+      beat(74, 'any', ['splitter', 6], ['exploder', 8], ['shooter', 5], ['swarmling', 18]),
+      eliteBeat(84, 'any', 'frenzy', ['chaser', 10], ['charger', 6], ['armored', 4]),
+    ],
+    duration: 96,
+    difficulty: { spawnRate: 1.8, hp: 1.72 },
     elites: ['bulwark', 'frenzy', 'volatile'],
     eliteChance: 0.2,
-    waves: 8,
     bosses: ['broodmother', 'matron', 'atlas'],
     size: 44,
     palette: REACTOR,
