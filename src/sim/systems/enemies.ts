@@ -1,59 +1,135 @@
 /**
- * Enemy pass: behaviours, contact damage and deaths.
+ * Enemy pass: behaviours, contact damage, deaths and what a death leaves behind.
  *
- * `AI` is the dispatch table: one small function per behaviour, keyed by the ai id
- * the content names, so an archetype stays data and a behaviour nobody wrote is a
- * typecheck error rather than an enemy that quietly stands still. A behaviour
- * writes only through the pooled arrays and keeps its state machine in the pool's
- * `state` slot, so nothing here allocates.
+ * `AI` is the dispatch table: one small function per behaviour, keyed by the ai id the
+ * content names, so an archetype stays data and a behaviour nobody wrote is a
+ * typecheck error rather than an enemy that quietly stands still. A behaviour writes
+ * only through the pooled arrays and keeps its state machine in the pool's `phase` and
+ * `timer` slots, so nothing here allocates.
+ *
+ * Three rules hold the file together, because five behaviours written five ways read as
+ * five bugs rather than as a horde:
+ *
+ * - **Movement is a velocity plus `advance`,** never a jump. Separation, the speed cap,
+ *   the facing and the arena clamp all hang off that one path, and the interpolation the
+ *   renderer does between steps only means something if a body travelled through the
+ *   space between its old position and its new one.
+ * - **A tell is an event.** Anything the player is asked to answer — a charge line, a
+ *   filling ring — announces itself the tick it starts and leaves a `timer` behind for as
+ *   long as it lasts, so presentation never has to guess what a body is about to do.
+ * - **Nothing detonates inside the kill.** A blast is queued where the death happens and
+ *   paid out later in the tick by `resolveBlasts`, because the kill happens in the middle
+ *   of a shot that is still walking the tick's one shared query buffer, and because a
+ *   blast that kills a second bomber wants a stack to land on rather than recursion.
  */
 
-import { ENEMIES, type AiId, type EnemyDef } from '../../content/enemies';
+import { ENEMIES, enemyIndex, type AiId, type EnemyDef } from '../../content/enemies';
 import { range } from '../rng';
 import { queryRadius } from '../spatialHash';
-import { DT, Ev, TUNE, alloc, pushEvent, release, type World } from '../world';
+import { DT, Ev, Tele, TUNE, alloc, pushEvent, release, type World } from '../world';
 
 /** One tick of one enemy's behaviour. */
 type AiFn = (w: World, i: number) => void;
 
 /**
- * Keys are the ai ids in content/enemies.ts and the record has to cover all of
- * them, which is what makes adding an id without adding a behaviour fail the
- * typecheck.
+ * Keys are the ai ids in content/enemies.ts and the record has to cover all of them,
+ * which is what makes adding an id without adding a behaviour fail the typecheck.
+ *
+ * The swarmling and the splitter share the stepper on purpose: what makes them different
+ * is how fast they go and how wide they swing, and that is data.
  */
 const AI: Record<AiId, AiFn> = {
   chaser: seekChaser,
+  swarmling: swaySeek,
+  splitter: swaySeek,
+  charger: chargeRunner,
+  exploder: fuseRunner,
+  armored: standoffOrbit,
 };
 
 /** Separation stops paying for itself past this many neighbours examined. */
 const SEP_CAP = 24;
 
 /**
+ * Behaviour phases, in the pool's `phase` slot.
+ *
+ * Kept beside `state` rather than inside it because a behaviour's phase and the stagger a
+ * hit gives it are two facts that have to survive each other: a charger knocked out of its
+ * wind-up is still a charger in a wind-up, it is just reeling.
+ */
+const Phase = { Seek: 0, Windup: 1, Dash: 2, Recover: 3, Fuse: 4, Orbit: 5 } as const;
+
+/**
+ * How many blasts deep one detonation may chain.
+ *
+ * Four is enough to empty a chamber of bombers and still finite, which is the point: with
+ * no depth in it, a run can end on the tick a grenadier is shot, because every bomb that
+ * died went off inside every other one's radius, in one tick, forever.
+ */
+const MAX_BLAST_CHAIN = 4;
+
+/** The golden angle, in radians. See `spawnEnemy` and `killEnemy` for what it does. */
+const GOLDEN_ANGLE = 2.399_963_229_728_653;
+
+/**
  * Put an enemy of `def` at (x, y), healthy and with its archetype's HP.
  *
- * Shared by the wave spawner, the debug spawn hook and the tests, so a spawned
- * enemy always starts the way content says it does. Returns the slot, or -1 when
- * the pool is full.
+ * Shared by the wave spawner, the debug spawn hook and the tests, so a spawned enemy
+ * always starts the way content says it does. The position is pulled inside the arena by
+ * its own radius, because those three callers each have their own idea of where a body may
+ * go and only the clamp has to be the same answer in all of them. Returns the slot, or -1
+ * when the pool is full.
  */
 export function spawnEnemy(w: World, def: number, x: number, y: number): number {
   const i = alloc(w.enemies);
   if (i < 0) return -1;
   const enemy = w.enemies;
-  enemy.x[i] = x;
-  enemy.y[i] = y;
+  const shape = ENEMIES[def];
+  const px = Math.min(Math.max(x, w.minX + shape.radius), w.maxX - shape.radius);
+  const py = Math.min(Math.max(y, w.minY + shape.radius), w.maxY - shape.radius);
+  enemy.x[i] = px;
+  enemy.y[i] = py;
   enemy.kind[i] = def;
-  enemy.hp[i] = ENEMIES[def].hp;
-  pushEvent(w, Ev.Spawn, i, def, x, y);
+  enemy.hp[i] = shape.hp;
+
+  // A body arrives looking at the player, which is the honest default — it is what it
+  // will be walking toward — and it means directional armour has something to read on the
+  // tick a body appears. A zero facing reads as unarmoured in `armorAgainst`, so leaving
+  // the facing to be derived would make the first shot at every armored a free one.
+  const dx = w.player.x - px;
+  const dy = w.player.y - py;
+  const d2 = dx * dx + dy * dy;
+  if (d2 > 1e-12) {
+    const d = Math.sqrt(d2);
+    enemy.fx[i] = dx / d;
+    enemy.fy[i] = dy / d;
+  } else {
+    enemy.fx[i] = 1;
+    enemy.fy[i] = 0;
+  }
+
+  // The weave offset for the bodies that weave, taken from the slot rather than from
+  // world.rng: a stride of the golden angle puts consecutive slots as far apart in phase as
+  // they can be, so a cloud of forty arrives spread across its own approach instead of
+  // swinging as one. Cheaper than a draw, and it does not shift the random stream that
+  // every seeded test downstream of here reads.
+  if ((shape.params.swayAmp ?? 0) > 0) enemy.timer[i] = (i * GOLDEN_ANGLE) % (Math.PI * 2);
+
+  pushEvent(w, Ev.Spawn, i, def, px, py);
   return i;
 }
 
 /**
  * Run every live enemy's behaviour, then let it hit the player.
  *
- * Also leaves `enemyNear` and `nearest` behind: the closest enemy measured before
- * anything moved, which is what the auto-fire decision reads and where it points.
- * Enemies already at 0 HP are skipped — the damage pass that killed them has
- * already dropped their shard and given the slot back.
+ * Also leaves `enemyNear` and `nearest` behind: the closest enemy measured before anything
+ * moved, which is what the auto-fire decision reads and where it points. Enemies already
+ * at 0 HP are skipped — the damage pass that killed them has already dropped their shard
+ * and given the slot back.
+ *
+ * A staggering body skips its behaviour and rides the shove it was given, which is what
+ * makes knockback a positioning tool as well as a number: three ticks of not-steering is
+ * enough to spoil a charger's line and to turn an armored's shield aside.
  */
 export function updateEnemies(w: World): void {
   const enemies = w.enemies;
@@ -74,7 +150,21 @@ export function updateEnemies(w: World): void {
     }
 
     const def = ENEMIES[enemies.kind[i]];
-    AI[def.ai](w, i);
+    // The body's own clock, which is what the weave swings on: a body that arrives late is
+    // already mid-swing rather than starting its sway from zero like a clone.
+    enemies.age[i] += DT;
+
+    if (enemies.state[i] > 0) {
+      enemies.state[i]--;
+      advance(w, i, def);
+    } else {
+      AI[def.ai](w, i);
+      // A behaviour may spend its own body: an exploder that finishes its fuse takes
+      // itself with it, and a slot already back in the free list has no contact to make.
+      // Tested on `alive` rather than `hp` because the question is the slot, not the health.
+      if (enemies.alive[i] === 0) continue;
+    }
+
     contact(w, def, d2);
   }
 
@@ -90,21 +180,25 @@ export function updateEnemies(w: World): void {
 /**
  * Seek the player through the crowd.
  *
- * Two states, both in `state`: above 0 the enemy is staggering from a hit and
- * rides the shove it was given, otherwise it steers at the player and shoves
- * neighbours out of its personal space, so the pack presses as a crowd with gaps
- * instead of one overlapping blob (DESIGN.md: the horde has to stay readable).
+ * The plain case: no wind-up, no fuse, nothing to read before it reaches you. It steers
+ * at the player and shoves neighbours out of its personal space, so the pack presses as a
+ * crowd with gaps instead of one overlapping blob (DESIGN.md: the horde has to stay
+ * readable), and that is the whole behaviour — which is why the four bodies added beside it
+ * did not need four copies of this.
  */
 function seekChaser(w: World, i: number): void {
+  seekDrive(w, i, ENEMIES[w.enemies.kind[i]]);
+}
+
+/**
+ * Straight-line seek at the archetype's cruise speed, through the crowd.
+ *
+ * Kept to one call so the separation, the speed cap and the facing are the same answer for
+ * every body that simply walks at you, and so a new archetype that only needs to walk is
+ * one data entry rather than one function.
+ */
+function seekDrive(w: World, i: number, def: EnemyDef): void {
   const enemies = w.enemies;
-  const def = ENEMIES[enemies.kind[i]];
-
-  if (enemies.state[i] > 0) {
-    enemies.state[i]--;
-    advance(w, i, def);
-    return;
-  }
-
   const player = w.player;
   let vx = 0;
   let vy = 0;
@@ -116,7 +210,239 @@ function seekChaser(w: World, i: number): void {
     vx = (dx / d) * def.speed;
     vy = (dy / d) * def.speed;
   }
+  drive(w, i, def, vx, vy);
+}
 
+/**
+ * Seek with a weave across the line of approach: the swarmling's jittered seek, and the
+ * splitter's slower and wider lurch.
+ *
+ * The swing is a sine on the body's own clock, offset by an angle its slot gave it, and it
+ * is a rotation of the aim rather than noise added to it: a body still steers at the player
+ * and drifts across that line, so it keeps closing instead of wandering off, and it costs
+ * one `Math.sin` a tick with no random number and no state to age. That is the whole reason
+ * a cloud of forty of them cannot be deleted by one shot fired down the middle.
+ */
+function swaySeek(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+  const player = w.player;
+
+  let vx = 0;
+  let vy = 0;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+
+  if (d2 > 1e-12) {
+    const d = Math.sqrt(d2);
+    const nx = dx / d;
+    const ny = dy / d;
+    const amp = def.params.swayAmp ?? 0;
+    const hz = def.params.swayHz ?? 0;
+    let swing = 0;
+    if (amp > 0 && hz > 0) {
+      swing = Math.sin(enemies.age[i] * hz * Math.PI * 2 + enemies.timer[i]) * amp;
+    }
+    const c = Math.cos(swing);
+    const s = Math.sin(swing);
+    vx = (nx * c - ny * s) * def.speed;
+    vy = (nx * s + ny * c) * def.speed;
+  }
+
+  drive(w, i, def, vx, vy);
+}
+
+/**
+ * Charger: stalk, lock a line, stop, dash it, recover. Four phases on one timer.
+ *
+ * The line is decided the tick it commits and does not move after that, so the answer to a
+ * charger is to *move*, not to shoot faster — which is the difference between a telegraph
+ * and a decoration. Half a second of wind-up is thirty ticks of it, past the 0.4 s
+ * DESIGN.md sets as the floor for anything a player is asked to read and answer, and the
+ * tell goes into the event ring the tick it starts, thirty ticks before the velocity does.
+ *
+ * `nearRange` is why a charge cannot be wasted on a body already in contact: a dash from
+ * arm's length has no room to be read, and a charger that never stops is only a faster
+ * chaser with a bigger number on it.
+ */
+function chargeRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+  const phase = enemies.phase[i];
+
+  if (phase === Phase.Windup) {
+    // Feet off the throttle, line drawn: this is the window the player has in it.
+    enemies.vx[i] = 0;
+    enemies.vy[i] = 0;
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      enemies.phase[i] = Phase.Dash;
+      enemies.timer[i] = def.params.dashTime;
+    }
+    return;
+  }
+
+  if (phase === Phase.Dash) {
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      enemies.phase[i] = Phase.Recover;
+      enemies.timer[i] = def.params.recover;
+      enemies.vx[i] = 0;
+      enemies.vy[i] = 0;
+      return;
+    }
+    // Straight down the locked line at thirteen metres a second — four times its cruise —
+    // and deliberately without separation: a charge that steers around the crowd in front
+    // of it is a homing missile, and that is a different monster.
+    const speed = def.params.dashSpeed;
+    enemies.vx[i] = enemies.fx[i] * speed;
+    enemies.vy[i] = enemies.fy[i] * speed;
+    advance(w, i, def);
+    return;
+  }
+
+  if (phase === Phase.Recover) {
+    // The punish for a missed charge: it stands where it overshot for two thirds of a
+    // second, side on, with its line empty.
+    enemies.vx[i] = 0;
+    enemies.vy[i] = 0;
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      enemies.phase[i] = Phase.Seek;
+      enemies.timer[i] = def.params.stalk;
+    }
+    return;
+  }
+
+  // Stalk. The timer here is the cooldown before it will commit again, so a charger that
+  // has just finished a cycle walks for `stalk` seconds before it locks another line.
+  if (enemies.timer[i] > 0) enemies.timer[i] -= DT;
+
+  const player = w.player;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+
+  if (d2 > 1e-12 && enemies.timer[i] <= 0) {
+    const d = Math.sqrt(d2);
+    if (d <= def.params.armRange && d >= def.params.nearRange) {
+      enemies.fx[i] = dx / d;
+      enemies.fy[i] = dy / d;
+      enemies.vx[i] = 0;
+      enemies.vy[i] = 0;
+      enemies.phase[i] = Phase.Windup;
+      enemies.timer[i] = def.params.windup;
+      // `b` says which shape to draw; the body's `fx`/`fy` say where it points and its
+      // `timer` says how much of the wind-up is left, which is everything a charge line
+      // needs and none of it needs a per-event object.
+      pushEvent(w, Ev.Telegraph, i, Tele.Line, enemies.x[i], enemies.y[i]);
+      return;
+    }
+  }
+
+  seekDrive(w, i, def);
+}
+
+/**
+ * Exploder: walk, and cook once it is close enough to matter.
+ *
+ * It keeps walking through the fuse, because a bomb you can walk around is fine and one
+ * that follows you for half a second at three metres a second is a threat you step out of.
+ * The half second is measured from three point six metres and the burst reaches 3.2, so a
+ * player who stands still eats it and a player who keeps moving does not — and the fuse
+ * runs out before contact range does, which is deliberate: its damage is the burst, not the
+ * hug, and a burst spent inside the i-frames a hug already spent is damage that silently
+ * does not exist.
+ *
+ * Both of its endings go through one call. Shot or fused, it pays out exactly one blast at
+ * the place it died, which is also why that blast is queued here and spent later.
+ */
+function fuseRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+
+  if (enemies.phase[i] === Phase.Fuse) {
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      killEnemy(w, i);
+      return;
+    }
+    seekDrive(w, i, def);
+    return;
+  }
+
+  const player = w.player;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  const arm = def.params.armRange;
+
+  if (d2 > 1e-12 && d2 <= arm * arm) {
+    enemies.phase[i] = Phase.Fuse;
+    enemies.timer[i] = def.params.fuseTime;
+    pushEvent(w, Ev.Telegraph, i, Tele.Ring, enemies.x[i], enemies.y[i]);
+  }
+
+  seekDrive(w, i, def);
+}
+
+/**
+ * Armored: close, then circle at arm's length.
+ *
+ * It stops at a four metre ring rather than pressing into the player, and spends most of
+ * its speed going sideways — which is what makes its plate a positioning puzzle instead of
+ * a tax. Its facing follows where it is going and lags that by a quarter of a second, so a
+ * body walking in a circle presents its flank to the middle of it. Running past one, or
+ * knocking it sideways and shooting the flat side, is the answer to it; standing in front
+ * of it and holding the trigger is not.
+ */
+function standoffOrbit(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+  const player = w.player;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  const ring = def.params.standoff;
+
+  if (d2 > ring * ring) {
+    const d = Math.sqrt(d2);
+    enemies.phase[i] = Phase.Seek;
+    drive(w, i, def, (dx / d) * def.speed, (dy / d) * def.speed);
+    return;
+  }
+  if (d2 <= 1e-12) {
+    drive(w, i, def, 0, 0);
+    return;
+  }
+
+  enemies.phase[i] = Phase.Orbit;
+  const d = Math.sqrt(d2);
+  const nx = dx / d;
+  const ny = dy / d;
+  // Half the pack circles one way and half the other, by slot parity: no extra state to
+  // carry, and a pair that arrives together does not march in single file.
+  const spin = (i & 1) === 0 ? 1 : -1;
+  const orbit = def.params.orbit;
+  // Sideways travel plus a spring on the ring, so it holds the distance instead of sliding
+  // past it, and so a player who runs away is followed rather than watched.
+  const drift = (d - ring) * 2;
+  const speed = def.speed;
+  const vx = (-ny * orbit * spin + nx * drift) * speed;
+  const vy = (nx * orbit * spin + ny * drift) * speed;
+  drive(w, i, def, vx, vy);
+}
+
+/**
+ * Steer `vx`/`vy` through the crowd, then move.
+ *
+ * The shared half of every behaviour: personal space, a cap so a shove cannot make a body
+ * faster than its own gait, the facing that directional armour and the shield quad are read
+ * from, and one travel step that keeps the whole body inside the arena.
+ */
+function drive(w: World, i: number, def: EnemyDef, vx: number, vy: number): void {
+  const enemies = w.enemies;
   const sepRadius = def.params.sepRadius;
   const push = def.params.sepPush;
   const found = queryRadius(
@@ -143,7 +469,9 @@ function seekChaser(w: World, i: number): void {
     vy += (oy / od) * weight;
   }
 
-  // Cap the sum so a shove cannot make a chaser faster than its own dash.
+  // Cap the sum so a shove cannot make a walker faster than its own dash. The charger's
+  // dash sets its velocity directly and never comes through here, which is the point: a
+  // charge is supposed to be faster than a walk.
   const cap = def.speed * 1.35;
   const speed2 = vx * vx + vy * vy;
   if (speed2 > cap * cap) {
@@ -154,7 +482,51 @@ function seekChaser(w: World, i: number): void {
 
   enemies.vx[i] = vx;
   enemies.vy[i] = vy;
+  face(w, i, def, vx, vy);
   advance(w, i, def);
+}
+
+/**
+ * Turn the body's front toward where it is actually going.
+ *
+ * A lag rather than a snap, and a renormalise after it: lerping a unit vector toward
+ * another shortens it, and `armorAgainst` reads a dot product, so a facing allowed to
+ * shrink would quietly make armour weaker the harder a body turned. The low-`faceLag` cases
+ * are the interesting ones — the armored turns slowly enough that flanking it is something
+ * a player does on purpose.
+ */
+function face(w: World, i: number, def: EnemyDef, vx: number, vy: number): void {
+  const enemies = w.enemies;
+  const speed2 = vx * vx + vy * vy;
+  if (speed2 <= 1e-12) return;
+
+  const speed = Math.sqrt(speed2);
+  const tx = vx / speed;
+  const ty = vy / speed;
+  let fx = enemies.fx[i];
+  let fy = enemies.fy[i];
+
+  if (fx === 0 && fy === 0) {
+    enemies.fx[i] = tx;
+    enemies.fy[i] = ty;
+    return;
+  }
+
+  // A body that declares no `faceLag` turns instantly: the number is a lag, so a big one
+  // means no lag, and the clamp keeps a big one from overshooting the heading it wants.
+  const lag = def.params.faceLag ?? 64;
+  const k = Math.min(1, lag * DT);
+  fx += (tx - fx) * k;
+  fy += (ty - fy) * k;
+  const n2 = fx * fx + fy * fy;
+  if (n2 > 1e-12) {
+    const n = 1 / Math.sqrt(n2);
+    enemies.fx[i] = fx * n;
+    enemies.fy[i] = fy * n;
+  } else {
+    enemies.fx[i] = tx;
+    enemies.fy[i] = ty;
+  }
 }
 
 /** One tick of travel, kept inside the arena so a pack cannot flank through a wall. */
@@ -167,24 +539,56 @@ function advance(w: World, i: number, def: EnemyDef): void {
 }
 
 /**
- * Contact damage, gated by i-frames.
+ * The armour one hit has to get through, given the direction it travelled.
  *
- * The first hit spends the player's invulnerability, so a pack that arrives all
- * at once costs one hit rather than one per body — which is what keeps a horde of
- * a thousand survivable. `d2` is the squared distance from before the enemy moved.
+ * Directional only for a body that declares `armorArc` and `armorSide`. A body that
+ * declares neither reads as "no arc, full plate all round" — the two defaults fold back to
+ * the flat number, which is every archetype except the armored, and is why the reads below
+ * use `??` instead of an existence test: `params` is a record of numbers, so a missing key
+ * is a number-shaped hole and the neutral value has to be named.
+ *
+ * Inside the arc — a hit arriving from within `armorArc`'s cosine of the body's front — it
+ * pays its full plate; anywhere else it pays `armorSide` of it, which the armored sets to
+ * nothing.
+ *
+ * `dirx`/`diry` point *along* the damage, from its source toward the body, so a hit that
+ * came from the front runs against the facing and the dot product goes negative. That is why
+ * the plate test is one comparison and not an angle.
  */
-function contact(w: World, def: EnemyDef, d2: number): void {
+export function armorAgainst(w: World, j: number, dirx: number, diry: number): number {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[j]];
+  if (def.armor <= 0) return 0;
+
+  const arc = def.params.armorArc ?? 0;
+  const side = def.params.armorSide ?? 1;
+  if (arc <= 0 || side >= 1) return def.armor;
+
+  const fx = enemies.fx[j];
+  const fy = enemies.fy[j];
+  if (fx === 0 && fy === 0) return def.armor;
+
+  return dirx * fx + diry * fy < -arc ? def.armor : def.armor * side;
+}
+
+/**
+ * Take a hit off the player, gated by i-frames.
+ *
+ * The first hit spends the player's invulnerability, so a pack that arrives all at once
+ * costs one hit rather than one per body — which is what keeps a horde of a thousand
+ * survivable. It is also why an exploder's burst is timed to land before its hug does: two
+ * sources of damage inside one half second is one source of damage.
+ *
+ * `trauma` is screen shake times ten, which is how the camera turns a hit into a jolt.
+ */
+function hurtPlayer(w: World, dmg: number, trauma: number): void {
   const player = w.player;
   if (!player.alive || player.iframes > 0) return;
 
-  const reach = TUNE.playerRadius + def.radius + def.params.touchRange;
-  if (d2 > reach * reach) return;
-
-  const dmg = def.params.touchDamage;
   player.hp = player.hp > dmg ? player.hp - dmg : 0;
   player.iframes = TUNE.hurtIframes;
   // `a` is trauma x 10, which is how the camera turns this into shake.
-  pushEvent(w, Ev.Shake, 3, 0, player.x, player.y);
+  pushEvent(w, Ev.Shake, trauma, 0, player.x, player.y);
 
   if (player.hp <= 0) {
     player.alive = false;
@@ -193,16 +597,55 @@ function contact(w: World, def: EnemyDef, d2: number): void {
   }
 }
 
+/** Contact damage, gated by i-frames. `d2` is the squared distance from before it moved. */
+function contact(w: World, def: EnemyDef, d2: number): void {
+  const player = w.player;
+  if (!player.alive || player.iframes > 0) return;
+
+  const reach = TUNE.playerRadius + def.radius + def.params.touchRange;
+  if (d2 > reach * reach) return;
+
+  hurtPlayer(w, def.params.touchDamage, 3);
+}
+
 /**
- * Kill a dead enemy: score, the kill event, and the XP shard the body drops.
+ * Put a burst on the stack instead of resolving it.
  *
- * Called from the damage pass the moment a hit takes an enemy to 0 HP rather than
- * from a sweep at the end of the tick, because a corpse left in the pool for a
- * tick still blocks the crowd and still takes shots. Releasing the slot here is
- * also what keeps a second shot in the same tick from spending a pierce on it:
- * the hash query skips dead slots.
+ * Returns false and counts the loss when the stack is full, which at thirty-two waiting
+ * bursts means the floor is already on fire and one more would not be the thing that decides
+ * the run. Counting it is the point: a burst that vanished silently is a bug nobody sees.
+ */
+function queueBlast(w: World, x: number, y: number, r: number, dmg: number, depth: number): boolean {
+  const stack = w.blasts;
+  if (stack.count >= stack.cap) {
+    stack.dropped++;
+    return false;
+  }
+  const at = stack.count++;
+  stack.x[at] = x;
+  stack.y[at] = y;
+  stack.r[at] = r;
+  stack.dmg[at] = dmg;
+  stack.chain[at] = depth;
+  return true;
+}
+
+/**
+ * Kill a dead enemy: score, the kill event, the XP shard the body drops, and whatever it
+ * takes with it.
+ *
+ * Called from the damage pass the moment a hit takes an enemy to 0 HP rather than from a
+ * sweep at the end of the tick, because a corpse left in the pool for a tick still blocks
+ * the crowd and still takes shots. Releasing the slot here is also what keeps a second shot
+ * in the same tick from spending a pierce on it: the hash query skips dead slots.
  *
  * Shard `kind` carries the archetype, which is where its XP value comes from.
+ *
+ * The two legacies a death can leave are both read from the body while it is still in its
+ * slot, which is why they sit above the release: a blast is queued for `resolveBlasts` to
+ * spend later in the tick, and the children a splitter comes apart into are put down around
+ * where it stood, so a splitter killed in the middle of the room is a different situation
+ * from one killed with its back to a wall.
  */
 export function killEnemy(w: World, i: number): void {
   const enemies = w.enemies;
@@ -225,5 +668,103 @@ export function killEnemy(w: World, i: number): void {
     shards.life[s] = TUNE.shardLife;
   }
 
+  const radius = def.params.blastRadius;
+  if (radius !== undefined && radius > 0) {
+    queueBlast(w, enemies.x[i], enemies.y[i], radius, def.params.blastDamage, w.blasts.depth);
+  }
+
+  const split = def.splits;
+  if (split !== undefined) {
+    const child = enemyIndex(split.def);
+    if (child >= 0) {
+      const childDef = ENEMIES[child];
+      const gap = def.radius + childDef.radius + 0.18;
+      // Evenly spaced, turned by a stride of the slot so a splitter does not always put its
+      // children down in the same orientation. They arrive at full health, which is the cost
+      // of the mechanic: three bodies that run most of the speed of the gun that just killed
+      // their parent.
+      for (let k = 0; k < split.count; k++) {
+        const a = k * ((Math.PI * 2) / split.count) + i * GOLDEN_ANGLE;
+        spawnEnemy(w, child, enemies.x[i] + Math.cos(a) * gap, enemies.y[i] + Math.sin(a) * gap);
+      }
+    }
+  }
+
   release(enemies, i);
+}
+
+/**
+ * Pay out the bursts the tick has built up, once per tick, after the weapons have run.
+ *
+ * Later than the kills that queued them for two reasons, and they are the reason blasts are
+ * a stack at all: a shot resolving a pierce is still walking the tick's one shared query
+ * buffer, and a blast that queried it there would rewrite the list the shot is standing in;
+ * and a burst that kills a second bomber queues another burst, which wants a place to land
+ * rather than a second copy of this function underneath the first.
+ *
+ * A burst takes damage off the player through the same i-frame gate a hug uses — it neither
+ * bypasses it nor ignores it — and off other bodies through their armour, which is how a
+ * chamber of exploders becomes a chain reaction you set off somewhere you would rather not
+ * be standing. The depth cap and the guard both exist so no arrangement of bodies can make
+ * one tick outlast the tick after it.
+ */
+export function resolveBlasts(w: World): void {
+  const stack = w.blasts;
+  if (stack.count === 0) return;
+
+  const enemies = w.enemies;
+  const player = w.player;
+  let guard = stack.cap * 4;
+
+  while (stack.count > 0 && guard-- > 0) {
+    const at = --stack.count;
+    const x = stack.x[at];
+    const y = stack.y[at];
+    const r = stack.r[at];
+    const dmg = stack.dmg[at];
+    const depth = stack.chain[at];
+    if (depth >= MAX_BLAST_CHAIN) continue;
+    stack.depth = depth + 1;
+
+    const px = player.x - x;
+    const py = player.y - y;
+    const reach = r + TUNE.playerRadius;
+    if (px * px + py * py <= reach * reach) hurtPlayer(w, dmg, 8);
+
+    const found = queryRadius(
+      w.hash,
+      enemies.x,
+      enemies.y,
+      enemies.alive,
+      x,
+      y,
+      r + TUNE.shotRadius,
+      w.query,
+    );
+
+    for (let k = 0; k < found; k++) {
+      const j = w.query[k];
+      if (enemies.hp[j] <= 0) continue;
+
+      const def = ENEMIES[enemies.kind[j]];
+      const dx = enemies.x[j] - x;
+      const dy = enemies.y[j] - y;
+      const d2 = dx * dx + dy * dy;
+      const bodyReach = r + def.radius;
+      if (d2 > bodyReach * bodyReach) continue;
+
+      // A burst is omnidirectional, so it pays the flat plate: directional armour is about
+      // where damage came from, and a blast comes from everywhere at once.
+      let dealt = dmg - def.armor;
+      if (dealt < 1) dealt = 1;
+      enemies.hp[j] -= dealt;
+      pushEvent(w, Ev.Hit, -1, j, enemies.x[j], enemies.y[j]);
+      if (enemies.hp[j] <= 0) killEnemy(w, j);
+    }
+
+    pushEvent(w, Ev.Explosion, -1, Math.round(r * 10), x, y);
+  }
+
+  stack.depth = 0;
+  stack.count = 0;
 }

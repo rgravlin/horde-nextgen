@@ -87,6 +87,13 @@ export function hashPool(h: number, p: Pool): number {
   h = mixU16s(h, p.state);
   h = mixFloats(h, p.dotT);
   h = mixFloats(h, p.dotDps);
+  // The behaviour slots. A divergence in a state machine is exactly the kind of thing this
+  // fingerprint exists to catch — a charger that winds up a tick late has the same
+  // positions as one that does not, for a while — so they are covered, not just the health.
+  h = mixU8s(h, p.phase);
+  h = mixFloats(h, p.timer);
+  h = mixFloats(h, p.fx);
+  h = mixFloats(h, p.fy);
   return h;
 }
 
@@ -144,6 +151,11 @@ export function hashWorld(world: World): number {
   h = fnv32Word(h, world.wave.index);
   h = mixScalar(h, world.wave.timeLeft);
   h = mixScalar(h, world.wave.timer);
+  // Where the wave's pack recipe has got to. It decides what the next batch is, so two
+  // runs that disagree here are spawning different enemies from here on.
+  h = fnv32Word(h, world.wave.cursor);
+  // `blasts` is deliberately not covered: the stack is drained every tick, so between
+  // ticks it is always empty and hashing it would cost four scans for one constant.
 
   h = hashPool(h, world.enemies);
   h = hashPool(h, world.shots);

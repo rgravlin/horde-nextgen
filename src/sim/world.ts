@@ -20,6 +20,13 @@ export const POOL_CAPS = {
   projectiles: 2048,
   enemyProjectiles: 512,
   shards: 1024,
+  /**
+   * Death blasts waiting inside one tick. Not a TECH.md pool: a burst is a few floats
+   * rather than an entity, and 32 is already more bombers than detonate in one 1/60 s
+   * window, so a stack that fills is a burst dropped and counted, not a queue that
+   * grows.
+   */
+  blasts: 32,
 } as const;
 
 /** Tuning defaults the sim reads. Content files may override per item later. */
@@ -92,14 +99,37 @@ export const Ev = {
   Hit: 3,
   Kill: 4,
   Spawn: 5,
+  /**
+   * A wind-up began, for the telegraph shapes in DESIGN.md ("a charge line or landing
+   * ring that fills up until impact"). `a` is the enemy slot, `b` the shape from `Tele`
+   * below. The event only marks the *start*: how much of the shape is still to come is
+   * the body's `timer`, and where it points is its `fx`/`fy`, both read from the pool.
+   */
   Telegraph: 6,
   Pickup: 7,
   LevelUp: 8,
   Shake: 9,
   Death: 10,
   Error: 11,
-  /** A lobbed shell detonated: `a` is the weapon, `b` the burst radius x 10. */
+  /**
+   * Something detonated: `b` is the burst radius x 10. `a` is the weapon for a lobbed
+   * shell and -1 for an enemy's death blast, which has no gun behind it.
+   */
   Explosion: 12,
+} as const;
+
+/**
+ * What a `Telegraph` event warns about, in its `b` slot.
+ *
+ * Shapes rather than archetype ids, because the shape is what the renderer needs and
+ * two enemies can share one: a line drawn down the body's facing for a charge, a ring
+ * of its blast radius for a detonation.
+ */
+export const Tele = {
+  /** A charge is coming along the body's facing, `dashReach` metres of it. */
+  Line: 1,
+  /** The body is fusing and will burst at its own radius. */
+  Ring: 2,
 } as const;
 
 /** One fixed-timestep tick, shared by the loop and the tests. */
@@ -139,6 +169,29 @@ export interface Pool {
    */
   readonly dotT: Float32Array;
   readonly dotDps: Float32Array;
+  /**
+   * Behaviour phase id, for the enemy pool only (see `Phase` in
+   * `systems/enemies.ts`). Kept beside `state` rather than inside it because a
+   * behaviour's phase and the stagger a hit gives it are two facts that have to
+   * survive each other: a charger knocked out of its wind-up is still a charger in a
+   * wind-up, it is just reeling.
+   */
+  readonly phase: Uint8Array;
+  /**
+   * Behaviour clock, for the enemy pool only: seconds left in the current phase for the
+   * bodies that have phases, and the weave offset for the bodies that swing instead. One
+   * array rather than two because a behaviour only ever wants one number that ages, and a
+   * second would have to be kept in step with the first.
+   */
+  readonly timer: Float32Array;
+  /**
+   * Facing: the unit direction a body presents as its front, for the enemy pool only.
+   * Directional armour reads it (`armorAgainst`) and the shield quad is drawn from it,
+   * which is why it is state rather than something derived from velocity at the
+   * moment a hit lands — a body that is standing still or reeling still has a front.
+   */
+  readonly fx: Float32Array;
+  readonly fy: Float32Array;
 }
 
 /** Circular event buffer, oldest first, dropping the oldest on overflow. */
@@ -155,6 +208,37 @@ export interface EventRing {
   count: number;
   /** Events dropped for lack of room; keeps the loss observable. */
   dropped: number;
+}
+
+/**
+ * Death blasts waiting to be resolved, newest at the top of the stack.
+ *
+ * A blast is queued where the death happens and paid out later in the tick, in
+ * `resolveBlasts`, rather than resolved inside the kill. Two reasons, both about
+ * correctness rather than tidiness: the kill happens while a shot is walking the
+ * tick's shared hash-query buffer, and a blast that queried it there would rewrite
+ * the very list the shot is still iterating; and a blast that kills another bomber
+ * queues another blast, which wants a stack to land on rather than recursion.
+ */
+export interface BlastStack {
+  readonly cap: number;
+  readonly x: Float32Array;
+  readonly y: Float32Array;
+  /** Metres of reach the burst carries. */
+  readonly r: Float32Array;
+  /** Damage at the centre, before armour. */
+  readonly dmg: Float32Array;
+  /** How many blasts deep this one was queued, capped by the resolver. */
+  readonly chain: Uint8Array;
+  count: number;
+  /** Bursts dropped because the stack was full; keeps the loss observable. */
+  dropped: number;
+  /**
+   * How deep the burst being paid out right now sits, so a death caused by a burst can
+   * mark its own child instead of starting a fresh chain. Only `resolveBlasts` writes it,
+   * and it is back to 0 between ticks.
+   */
+  depth: number;
 }
 
 export interface Player {
@@ -231,6 +315,13 @@ export interface WaveState {
   timeLeft: number;
   /** Seconds until the next spawn batch. */
   timer: number;
+  /**
+   * Where in the wave's pack recipe the next batch starts. Walked forward by the size
+   * of each batch, so successive packs draw different parts of the recipe: that is
+   * what makes a pack mixed rather than one archetype repeated, and what lets a
+   * chapter's composition be read off the recipe instead of drawn from luck.
+   */
+  cursor: number;
 }
 
 export interface World {
@@ -283,6 +374,8 @@ export interface World {
   shots: Pool;
   enemyShots: Pool;
   shards: Pool;
+  /** Death blasts queued this tick, paid out by `resolveBlasts` (see systems/enemies). */
+  blasts: BlastStack;
   hash: SpatialHash;
   events: EventRing;
   /** Scratch for hash queries; only valid during the tick that filled it. */
@@ -294,11 +387,27 @@ export interface WorldOptions {
   projectiles?: number;
   enemyProjectiles?: number;
   shards?: number;
+  blasts?: number;
   /** Arena is centred on the origin with this half-edge; 60 gives 120x120 m. */
   arenaHalf?: number;
   hashCell?: number;
   eventCap?: number;
   queryCap?: number;
+}
+
+/** The stack of waiting bursts. See `BlastStack`. */
+export function createBlastStack(cap: number): BlastStack {
+  return {
+    cap,
+    x: new Float32Array(cap),
+    y: new Float32Array(cap),
+    r: new Float32Array(cap),
+    dmg: new Float32Array(cap),
+    chain: new Uint8Array(cap),
+    count: 0,
+    dropped: 0,
+    depth: 0,
+  };
 }
 
 export function createPool(name: string, cap: number): Pool {
@@ -322,11 +431,15 @@ export function createPool(name: string, cap: number): Pool {
     life: new Float32Array(cap),
     kind: new Uint16Array(cap),
     state: new Uint16Array(cap),
-    // Only the enemy pool ever writes these two (see Pool), but they are allocated
+    // Only the enemy pool ever writes these six (see Pool), but they are allocated
     // everywhere so `alloc` can hand back a cleared slot without knowing what kind
-    // of pool it is: 16 KB of quiet memory for that invariant to hold.
+    // of pool it is: a few KB of quiet memory for that invariant to hold.
     dotT: new Float32Array(cap),
     dotDps: new Float32Array(cap),
+    phase: new Uint8Array(cap),
+    timer: new Float32Array(cap),
+    fx: new Float32Array(cap),
+    fy: new Float32Array(cap),
   };
 }
 
@@ -347,6 +460,10 @@ export function alloc(p: Pool): number {
   p.state[i] = 0;
   p.dotT[i] = 0;
   p.dotDps[i] = 0;
+  p.phase[i] = 0;
+  p.timer[i] = 0;
+  p.fx[i] = 0;
+  p.fy[i] = 0;
   return i;
 }
 
@@ -464,11 +581,13 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
       index: 1,
       timeLeft: TUNE.waveLength,
       timer: TUNE.firstBatchDelay,
+      cursor: 0,
     },
     enemies: createPool('enemies', enemyCap),
     shots: createPool('shots', opts.projectiles ?? POOL_CAPS.projectiles),
     enemyShots: createPool('enemyShots', opts.enemyProjectiles ?? POOL_CAPS.enemyProjectiles),
     shards: createPool('shards', opts.shards ?? POOL_CAPS.shards),
+    blasts: createBlastStack(opts.blasts ?? POOL_CAPS.blasts),
     hash: createSpatialHash(minX, minY, maxX, maxY, cell, enemyCap),
     events: {
       cap: eventCap,

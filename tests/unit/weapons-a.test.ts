@@ -138,7 +138,19 @@ describe('weapon data', () => {
     expect(byId('chainLightningWand').chain).toBe(5);
     expect(byId('singularityGun').fire).toBe('orb');
     expect(byId('singularityGun').pull).toBeGreaterThan(0);
-    expect(ENEMIES).toHaveLength(1);
+
+    // The enemy table is pinned the same way the weapon one is, so that adding an archetype
+    // is a decision made here rather than a drift. What each behaviour does is pinned in
+    // tests/unit/enemies-a.test.ts; this only guards the shape of the data.
+    expect(ENEMIES.map((d) => d.id)).toEqual([
+      'chaser',
+      'swarmling',
+      'charger',
+      'exploder',
+      'splitter',
+      'splinter',
+      'armored',
+    ]);
   });
 });
 

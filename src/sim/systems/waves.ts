@@ -1,17 +1,26 @@
 /**
  * Wave spawner.
  *
- * A clock, not a script: batches arrive on a timer whose gap shrinks with the wave
- * index and whose size grows with it, so a chapter gets heavier the longer it runs.
- * Every batch lands just outside the 32x18 m view rect that surrounds the player
- * (DESIGN.md: about 30x18 m of floor is on screen), never inside it, so a pack
- * arrives from off-screen and the player has time to read it coming.
+ * A clock, not a script: batches arrive on a timer whose gap shrinks with the wave index
+ * and whose size grows with it, so a chapter gets heavier the longer it runs. Every batch
+ * lands just outside the 32x18 m view rect that surrounds the player (DESIGN.md: about
+ * 30x18 m of floor is on screen), never inside it, so a pack arrives from off-screen and
+ * the player has time to read it coming.
  *
- * Chapter wave scripts (T8) will drive pack composition and chokepoints from here.
- * Until then every batch is chasers, which is what the escalation test measures.
+ * What arrives is data. Each wave has a pack recipe in `content/enemies.ts` and the
+ * spawner reads it straight down, taking the next batch where the last one stopped — see
+ * `WaveState.cursor` — so a pack is mixed by construction rather than by luck and the
+ * fifth body of wave 1 is a charger in every run. That is deliberate on two counts. A
+ * weighted bag would make "does this chapter ever show you a charger" a matter of luck,
+ * which a browser scenario cannot assert on and a player cannot learn; and a pack of one
+ * archetype reads as one mechanic rather than as a horde, which is the difference the mixed
+ * compositions in DESIGN.md are for.
+ *
+ * Where it arrives is still random, and that part has to stay random: a fixed entry point
+ * is a path a player memorises by wave three.
  */
 
-import { DEFAULT_ENEMY, ENEMIES } from '../../content/enemies';
+import { DEFAULT_ENEMY, ENEMIES, PACKS, enemyIndex } from '../../content/enemies';
 import { nextInt, range } from '../rng';
 import { DT, TUNE, type World } from '../world';
 import { spawnEnemy } from './enemies';
@@ -28,14 +37,16 @@ const WALL_MARGIN = 0.5;
 /**
  * Start or restart the clock for a chapter.
  *
- * Off by default in a fresh World: an idle world, a paused one and the test
- * fixtures are all expected to spawn nothing until a chapter actually begins.
+ * Off by default in a fresh World: an idle world, a paused one and the test fixtures are
+ * all expected to spawn nothing until a chapter actually begins. The recipe cursor starts
+ * at the top of the chapter's first pack, so a restart replays the same horde.
  */
 export function startWaves(w: World, fromWave = 1): void {
   w.wave.running = true;
   w.wave.index = fromWave;
   w.wave.timeLeft = TUNE.waveLength;
   w.wave.timer = TUNE.firstBatchDelay;
+  w.wave.cursor = 0;
 }
 
 /** Stop the clock, for a cleared chapter or a run that ended. */
@@ -57,7 +68,12 @@ export function updateWaves(w: World): void {
   wave.timer -= DT;
   for (let n = 0; wave.timer <= 0 && n < BATCHES_PER_TICK; n++) {
     const size = batchSize(wave.index);
-    for (let k = 0; k < size; k++) spawnOne(w);
+    const pack = packFor(wave.index);
+    for (let k = 0; k < size; k++) spawnOne(w, archetypeAt(pack, wave.cursor + k));
+    // Forward by the size of the batch that just went, not by one: the next pack starts
+    // where this one ran out, which is what keeps a batch mixed instead of repeating the
+    // same five archetypes in the same order every time.
+    wave.cursor += size;
     wave.timer += spawnGap(wave.index);
   }
 }
@@ -74,21 +90,41 @@ function batchSize(waveIndex: number): number {
   return size < TUNE.batchCap ? size : TUNE.batchCap;
 }
 
+/** The recipe a wave draws from. The last row carries on past the end of the list. */
+function packFor(waveIndex: number): readonly string[] {
+  const row = PACKS[waveIndex - 1];
+  return row === undefined ? PACKS[PACKS.length - 1] : row;
+}
+
 /**
- * Put one chaser just outside the view rect, on a side and at a point drawn from
+ * The archetype at one position in a recipe, as a table index.
+ *
+ * A name that matches nothing falls back to the default archetype rather than to nothing:
+ * a typo in a recipe should make a wave the wrong shape, which is a thing someone notices,
+ * rather than quietly empty it.
+ */
+function archetypeAt(pack: readonly string[], cursor: number): number {
+  const index = enemyIndex(pack[cursor % pack.length]);
+  return index >= 0 ? index : DEFAULT_ENEMY;
+}
+
+/**
+ * Put one body of `def` just outside the view rect, on a side and at a point drawn from
  * world.rng.
  *
- * A side that would land it outside the arena is re-picked, so hugging a wall does
- * not switch the horde off; the sides still inside the arena keep working. When no
- * side works — a test arena smaller than the view rect — the batch is skipped and
- * the timer tries again next tick rather than spawning on top of the player.
+ * A side that would land it outside the arena is re-picked, so hugging a wall does not
+ * switch the horde off; the sides still inside the arena keep working. When no side works
+ * — a test arena smaller than the view rect — the batch is skipped and the timer tries
+ * again next tick rather than spawning on top of the player. The margin is measured from
+ * the archetype's own body, because a 0.24 m splinter and a 0.62 m armored are not the
+ * same thing to put down beside a wall.
  */
-function spawnOne(w: World): void {
-  const radius = ENEMIES[DEFAULT_ENEMY].radius;
+function spawnOne(w: World, def: number): void {
+  const radius = ENEMIES[def].radius;
   const lowX = w.minX + WALL_MARGIN + radius;
   const highX = w.maxX - WALL_MARGIN - radius;
   const lowY = w.minY + WALL_MARGIN + radius;
-  const highY = w.maxY - WALL_MARGIN + radius;
+  const highY = w.maxY - WALL_MARGIN - radius;
   const px = w.player.x;
   const py = w.player.y;
   const startSide = nextInt(w.rng, SIDE_TRIES);
@@ -118,7 +154,7 @@ function spawnOne(w: World): void {
     }
 
     if (x < lowX || x > highX || y < lowY || y > highY) continue;
-    spawnEnemy(w, DEFAULT_ENEMY, x, y);
+    spawnEnemy(w, def, x, y);
     return;
   }
 }

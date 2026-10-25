@@ -259,6 +259,13 @@ export function createApp(ports: AppPorts): App {
     const byType: Record<string, number> = {};
     for (let i = 0; i < ENEMIES.length; i++) byType[ENEMIES[i].id] = 0;
     const enemies = w.enemies;
+    // One pass over the live slots, so a scenario can count a horde by archetype
+    // without walking the pools. Every id key is always present — 0 means "not on
+    // screen", which is what lets a scenario assert on a type it expects to see.
+    for (let i = 0; i < enemies.cap; i++) {
+      if (enemies.alive[i] === 0 || enemies.hp[i] <= 0) continue;
+      byType[ENEMIES[enemies.kind[i]].id]++;
+    }
     const nearest = nearestEnemies(w);
 
     const weapons: ForgeWeapon[] = [];

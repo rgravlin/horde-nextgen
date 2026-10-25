@@ -30,7 +30,7 @@ import { ENEMIES } from '../../content/enemies';
 import { WEAPONS, type WeaponDef } from '../../content/weapons';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, TUNE, pushEvent, release, type World } from '../world';
-import { killEnemy } from './enemies';
+import { armorAgainst, killEnemy } from './enemies';
 import { applyBurn, throughArmor } from './status';
 
 /** Metres of per-tick travel the hit query pads for, beyond the widest body. */
@@ -81,6 +81,8 @@ function falloff(def: WeaponDef, distance: number): number {
  * Armour subtracts after falloff and the power-up multiplier, and `armorPen`
  * cancels part of it — the sniper's reason to exist. A hit that does not clear the
  * armour still takes 1 HP, so a weapon is never hard-countered into doing nothing.
+ * Armour is read through `armorAgainst`, so it is the plate the body presents to *this*
+ * direction rather than a flat number: the same shot into an armored's flank pays nothing.
  * The shove is applied in the direction the damage travelled and staggers the body
  * for STAGGER_TICKS, which is what makes knockback a positioning tool rather than
  * only a number.
@@ -108,9 +110,12 @@ function damage(
   scale: number,
 ): void {
   const enemies = w.enemies;
-  const enemy = ENEMIES[enemies.kind[j]];
   const pen = def.armorPen || 0;
-  const armor = enemy.armor * (1 - pen);
+  // Directional, and `dirx`/`diry` are what make it directional: a body shot while it is
+  // walking at you pays its plate and the same body shot from the side or the back does
+  // not, which is the whole answer to the armored (see `armorAgainst`). Every path here
+  // knows the direction its damage travelled, so one call covers all seven.
+  const armor = armorAgainst(w, j, dirx, diry) * (1 - pen);
 
   enemies.hp[j] -= throughArmor(armor, dmg * scale, scale);
 

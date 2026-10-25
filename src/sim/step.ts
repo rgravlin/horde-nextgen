@@ -10,7 +10,7 @@
 
 import type { InputFrame } from './input';
 import { queryRadius, rebuild } from './spatialHash';
-import { updateEnemies } from './systems/enemies';
+import { resolveBlasts, updateEnemies } from './systems/enemies';
 import { choosePick, updatePickups } from './systems/pickups';
 import { updateWeapons } from './systems/weapons';
 import { updateWaves } from './systems/waves';
@@ -24,11 +24,16 @@ const EPS = 1e-6;
  *
  * Order: timers -> player movement and dash -> broad-phase rebuild -> enemy
  * behaviours and contact damage -> weapon fire, projectile movement and damage
- * (a kill is resolved where the damage lands) -> the level-up pick -> pickups and
- * XP -> wave spawns. The grid is built before the passes that query it rather than
- * after, so the collision and separation tests read a grid that matches the
- * positions they are about to test, minus at most one tick of travel — which their
- * query radius pads for.
+ * (a kill is resolved where the damage lands) -> the blasts those deaths queued ->
+ * the level-up pick -> pickups and XP -> wave spawns. The grid is built before the
+ * passes that query it rather than after, so the collision and separation tests read
+ * a grid that matches the positions they are about to test, minus at most one tick of
+ * travel — which their query radius pads for.
+ *
+ * The blasts get their own pass after the shots for one reason: a burst is a second
+ * damage query, and every query in the tick shares `world.query`. Spending them where
+ * they happen would rewrite the candidate list the shot that made them is still
+ * standing in, and a burst that kills another bomber would recurse instead of queueing.
  *
  * Once the run is over nothing simulates: the tick that killed the player still
  * resolves its shots, and after that the world waits for the summary screen.
@@ -45,6 +50,7 @@ export function step(world: World, frame: InputFrame): void {
 
   updateEnemies(world);
   updateWeapons(world, frame);
+  resolveBlasts(world);
   if (frame.pick > 0) choosePick(world, frame.pick - 1);
   updatePickups(world);
   updateWaves(world);
