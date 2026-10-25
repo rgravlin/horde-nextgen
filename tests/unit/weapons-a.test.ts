@@ -141,7 +141,8 @@ describe('weapon data', () => {
 
     // The enemy table is pinned the same way the weapon one is, so that adding an archetype
     // is a decision made here rather than a drift. What each behaviour does is pinned in
-    // tests/unit/enemies-a.test.ts; this only guards the shape of the data.
+    // tests/unit/enemies-a.test.ts (melee five) and tests/unit/enemies-b.test.ts (ranged
+    // trio); this only guards the shape of the data.
     expect(ENEMIES.map((d) => d.id)).toEqual([
       'chaser',
       'swarmling',
@@ -150,6 +151,9 @@ describe('weapon data', () => {
       'splitter',
       'splinter',
       'armored',
+      'shooter',
+      'grenadier',
+      'healer',
     ]);
   });
 });

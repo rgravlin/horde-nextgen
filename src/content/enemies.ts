@@ -16,7 +16,17 @@ export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
  * That record is keyed by this union, so an id without a behaviour is a
  * typecheck error instead of an enemy that quietly stands still.
  */
-export const AI_IDS = ['chaser', 'swarmling', 'charger', 'exploder', 'splitter', 'armored'] as const;
+export const AI_IDS = [
+  'chaser',
+  'swarmling',
+  'charger',
+  'exploder',
+  'splitter',
+  'armored',
+  'shooter',
+  'grenadier',
+  'healer',
+] as const;
 
 export type AiId = (typeof AI_IDS)[number];
 
@@ -66,16 +76,19 @@ export interface EnemyDef {
  * make "does this chapter ever show you a charger" a matter of luck, and a browser
  * scenario has to be able to assert on it.
  *
- * The last row carries on for every wave past the end of the list.
+ * The last row carries on for every wave past the end of the list. The first two rows
+ * are what a chapter opens on and are pinned by the browser scenarios; the ranged trio
+ * join from wave 3 on, so a player meets a shooter before a whole pack shoots back,
+ * and meets a healer only once the pack already has wounded bodies worth mending.
  */
 export const PACKS: readonly (readonly string[])[] = [
   // Two bodies that walk at you, then the first thing that does not.
   ['chaser', 'swarmling', 'chaser', 'swarmling', 'charger'],
   ['swarmling', 'chaser', 'charger', 'exploder', 'chaser'],
-  ['charger', 'swarmling', 'exploder', 'chaser', 'splitter'],
-  ['charger', 'exploder', 'armored', 'swarmling', 'splitter'],
-  ['exploder', 'armored', 'splitter', 'charger', 'swarmling', 'exploder'],
-  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'charger', 'armored'],
+  ['charger', 'swarmling', 'exploder', 'shooter', 'chaser', 'splitter'],
+  ['charger', 'exploder', 'armored', 'shooter', 'splitter', 'grenadier'],
+  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'exploder'],
+  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'charger', 'armored', 'shooter', 'grenadier', 'healer'],
 ];
 
 /** The only archetype the wave spawner falls back to if a recipe names nothing else. */
@@ -88,7 +101,10 @@ export const DEFAULT_ENEMY = 0;
  * be cleared by an area weapon; the charger and the armored are the ones that punish
  * standing still; the exploder and the splitter are the ones it is worth shooting
  * before they reach the crowd, because killing them somewhere other than on top of you
- * is the whole skill of the pair.
+ * is the whole skill of the pair. The ranged trio then punishes *aiming at nothing*:
+ * the shooter and the grenadier make standing still at range a losing trade, and the
+ * healer is the reason the pack you are shooting takes longer to die than its HP says
+ * — its 6 XP is priced for the kill-first answer.
  */
 export const ENEMIES: readonly EnemyDef[] = [
   {
@@ -267,6 +283,100 @@ export const ENEMIES: readonly EnemyDef[] = [
       armorSide: 0,
     },
     accent: '#F2B233',
+  },
+  {
+    id: 'shooter',
+    faction: 'cult',
+    // The first body that shoots back, and it is built to be read: a quarter-second
+    // red flash before a bolt slow enough to walk out of, at a band it holds rather
+    // than presses. Two pistol rounds kill it at that band, so the trade it forces is
+    // "spend the two shots now or eat the volley" — which is the decision every ranged
+    // pack later makes again, taught here at four XP.
+    hp: 26,
+    speed: 3.0,
+    radius: 0.42,
+    armor: 0,
+    xp: 4,
+    ai: 'shooter',
+    // The band, the flash and the bolt are all documented where the behaviour reads
+    // them (standoffShoot in systems/enemies.ts): the band it works at, the seconds of
+    // wind-up and cooldown, and the bolt's speed, damage and life.
+    params: {
+      sepRadius: 1.3,
+      sepPush: 1.6,
+      touchRange: 0.25,
+      touchDamage: 4,
+      faceLag: 10,
+      standMin: 4.5,
+      standMax: 8,
+      windup: 0.4,
+      shotGap: 1.2,
+      boltSpeed: 13,
+      boltDamage: 8,
+      boltLife: 1.4,
+    },
+    accent: '#FF4D2E',
+  },
+  {
+    id: 'grenadier',
+    faction: 'reactor',
+    // A bomber that kills the floor rather than the body: it rings the landing point
+    // while the lob is in the air, so its damage is a place, announced, that you are
+    // asked to leave. It pays a little less than the exploder's 26 because the lob
+    // arrives where you *were* — standing still is what buys it. Squishy and slow;
+    // shooting it early spends the throw.
+    hp: 30,
+    speed: 2.8,
+    radius: 0.45,
+    armor: 1,
+    xp: 5,
+    ai: 'grenadier',
+    // lobMin/lobRange bound the throw, arcSpeed sets the flight (and with lobMin the
+    // guaranteed ring fill), and the burst numbers are the ring's, documented where
+    // lobRunner reads them.
+    params: {
+      sepRadius: 1.4,
+      sepPush: 1.5,
+      touchRange: 0.3,
+      touchDamage: 6,
+      faceLag: 8,
+      lobMin: 4,
+      lobRange: 14,
+      lobGap: 2.2,
+      arcSpeed: 10,
+      blastRadius: 3,
+      blastDamage: 22,
+    },
+    accent: '#9B5CFF',
+  },
+  {
+    id: 'healer',
+    faction: 'cult',
+    // The support body, and deliberately the thinnest one in the file: no attack, a
+    // leash it kites at, and a two-second pulse that undoes a magazine of player
+    // damage if it is left beside a wounded pack. Everything about it asks to be
+    // answered with prioritisation rather than with kite-around, which is why the
+    // recipe only pairs it with bodies worth mending.
+    hp: 24,
+    speed: 4.2,
+    radius: 0.4,
+    armor: 0,
+    xp: 6,
+    ai: 'healer',
+    // healRange/healGap/healAmount/fleeRadius, documented where supportRunner reads
+    // them. The 5 m pulse is DESIGN.md's Heal Green aura.
+    params: {
+      sepRadius: 1.2,
+      sepPush: 2,
+      touchRange: 0.25,
+      touchDamage: 3,
+      faceLag: 14,
+      healRange: 5,
+      healGap: 2,
+      healAmount: 10,
+      fleeRadius: 8,
+    },
+    accent: '#3DFF8A',
   },
 ];
 

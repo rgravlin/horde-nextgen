@@ -116,6 +116,12 @@ export const Ev = {
    * shell and -1 for an enemy's death blast, which has no gun behind it.
    */
   Explosion: 12,
+  /**
+   * A heal aura pulsed: `a` is the healer's slot, `b` the aura radius x 10 and x/y
+   * the aura's centre. One event per pulse, not per healed body — the aura is one
+   * thing on screen even when it mends six bodies.
+   */
+  Heal: 13,
 } as const;
 
 /**
@@ -130,6 +136,13 @@ export const Tele = {
   Line: 1,
   /** The body is fusing and will burst at its own radius. */
   Ring: 2,
+  /**
+   * A ring at a point that is not a body: the lobbed grenade's landing circle. The
+   * event's x/y is the ring's centre; the grenade that brings it carries the radius
+   * (the `state` slot x 10) and how much of the fill is left (its `life`), so a
+   * filling ring needs no per-event object either.
+   */
+  RingAt: 3,
 } as const;
 
 /** One fixed-timestep tick, shared by the loop and the tests. */
@@ -159,7 +172,8 @@ export interface Pool {
    * enemies and shards (a shard's XP comes from the enemy it came off). */
   readonly kind: Uint16Array;
   /** Behaviour state-machine slot: stagger ticks for enemies, shots a
-   * projectile may still land. */
+   * projectile may still land, and the burst radius x 10 for a grenade (see
+   * `Tele.RingAt`), which lands nothing until its `life` runs out. */
   readonly state: Uint16Array;
   /**
    * Burn, for the enemy pool only: seconds of damage-over-time left on the body, and

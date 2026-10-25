@@ -11,6 +11,7 @@
 import type { InputFrame } from './input';
 import { queryRadius, rebuild } from './spatialHash';
 import { resolveBlasts, updateEnemies } from './systems/enemies';
+import { updateEnemyProjectiles } from './systems/enemyProjectiles';
 import { choosePick, updatePickups } from './systems/pickups';
 import { updateWeapons } from './systems/weapons';
 import { updateWaves } from './systems/waves';
@@ -25,10 +26,18 @@ const EPS = 1e-6;
  * Order: timers -> player movement and dash -> broad-phase rebuild -> enemy
  * behaviours and contact damage -> weapon fire, projectile movement and damage
  * (a kill is resolved where the damage lands) -> the blasts those deaths queued ->
- * the level-up pick -> pickups and XP -> wave spawns. The grid is built before the
- * passes that query it rather than after, so the collision and separation tests read
- * a grid that matches the positions they are about to test, minus at most one tick of
- * travel — which their query radius pads for.
+ * the enemy rounds and lobs -> the level-up pick -> pickups and XP -> wave spawns.
+ * The grid is built before the passes that query it rather than after, so the
+ * collision and separation tests read a grid that matches the positions they are
+ * about to test, minus at most one tick of travel — which their query radius pads
+ * for.
+ *
+ * The enemy projectiles get their own pass after the blasts, not inside the enemy
+ * pass, for the same reason the blasts do: a bolt or a lob is a second damage
+ * query on the tick, and every query in the tick shares `world.query`. Triggering
+ * a shot stays in the behaviour (that is where the telegraph and the cooldown
+ * live) and spending it lives in `systems/enemyProjectiles.ts`, which mirrors how
+ * the player's weapons hand their rounds to `systems/projectiles.ts`.
  *
  * The blasts get their own pass after the shots for one reason: a burst is a second
  * damage query, and every query in the tick shares `world.query`. Spending them where
@@ -51,6 +60,7 @@ export function step(world: World, frame: InputFrame): void {
   updateEnemies(world);
   updateWeapons(world, frame);
   resolveBlasts(world);
+  updateEnemyProjectiles(world);
   if (frame.pick > 0) choosePick(world, frame.pick - 1);
   updatePickups(world);
   updateWaves(world);

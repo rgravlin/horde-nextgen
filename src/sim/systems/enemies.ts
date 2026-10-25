@@ -7,8 +7,8 @@
  * only through the pooled arrays and keeps its state machine in the pool's `phase` and
  * `timer` slots, so nothing here allocates.
  *
- * Three rules hold the file together, because five behaviours written five ways read as
- * five bugs rather than as a horde:
+ * Three rules hold the file together, because eight behaviours written eight ways
+ * read as eight bugs rather than as a horde:
  *
  * - **Movement is a velocity plus `advance`,** never a jump. Separation, the speed cap,
  *   the facing and the arena clamp all hang off that one path, and the interpolation the
@@ -21,12 +21,19 @@
  *   paid out later in the tick by `resolveBlasts`, because the kill happens in the middle
  *   of a shot that is still walking the tick's one shared query buffer, and because a
  *   blast that kills a second bomber wants a stack to land on rather than recursion.
+ *
+ * The ranged trio also owes one rule of its own: a shot is *triggered* here and *delivered*
+ * by `systems/enemyProjectiles.ts`, mirroring how the player's weapons hand their rounds to
+ * `systems/projectiles.ts`. A behaviour that wants to shoot spends a pool slot and an event
+ * and gets on with its movement; everything that happens after the trigger — the flight,
+ * the hit test against the player, the burst — lives one file away.
  */
 
 import { ENEMIES, enemyIndex, type AiId, type EnemyDef } from '../../content/enemies';
 import { range } from '../rng';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, Tele, TUNE, alloc, pushEvent, release, type World } from '../world';
+import { hurtPlayer, launchBolt, lobGrenade } from './enemyProjectiles';
 
 /** One tick of one enemy's behaviour. */
 type AiFn = (w: World, i: number) => void;
@@ -36,7 +43,9 @@ type AiFn = (w: World, i: number) => void;
  * which is what makes adding an id without adding a behaviour fail the typecheck.
  *
  * The swarmling and the splitter share the stepper on purpose: what makes them different
- * is how fast they go and how wide they swing, and that is data.
+ * is how fast they go and how wide they swing, and that is data. The ranged trio each get
+ * their own because what they do between shots is genuinely different: hold a band, plant
+ * and lob, or escort and mend.
  */
 const AI: Record<AiId, AiFn> = {
   chaser: seekChaser,
@@ -45,6 +54,9 @@ const AI: Record<AiId, AiFn> = {
   charger: chargeRunner,
   exploder: fuseRunner,
   armored: standoffOrbit,
+  shooter: standoffShoot,
+  grenadier: lobRunner,
+  healer: supportRunner,
 };
 
 /** Separation stops paying for itself past this many neighbours examined. */
@@ -435,6 +447,233 @@ function standoffOrbit(w: World, i: number): void {
 }
 
 /**
+ * Shooter: hold a band, plant, flash, fire.
+ *
+ * The armored's ranged cousin: it also refuses to press in, but where the armored
+ * circles to present a plate the shooter stops to deliver a bolt. `standMin` and
+ * `standMax` are the band it works at — past `standMax` it closes, inside `standMin`
+ * it gives ground, in between it plants; `windup` is the seconds of red flash before
+ * the bolt leaves, at DESIGN.md's 400 ms floor and read across a crowd because the
+ * bolt is slow; `shotGap` is the seconds of cooldown between volleys; and the bolt
+ * itself carries `boltSpeed`, `boltDamage` and `boltLife`.
+ *
+ * The line is locked the tick the flash starts and does not steer after it, which is
+ * what makes the telegraph worth answering: a bolt that curved to follow you would
+ * punish exactly the players who read it. The shot itself is spent one file away in
+ * `enemyProjectiles.ts` — this function only decides when to pull the trigger, and
+ * keeps its feet busy in between.
+ */
+function standoffShoot(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+  const player = w.player;
+
+  if (enemies.phase[i] === Phase.Windup) {
+    // Feet off the throttle for the whole flash, same bargain as the charger's
+    // wind-up: a thirty-tick window to step off a line that will not steer.
+    enemies.vx[i] = 0;
+    enemies.vy[i] = 0;
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      // Fired down the locked facing, starting clear of the body so the first step
+      // of its sweep cannot start inside anything.
+      const fx = enemies.fx[i];
+      const fy = enemies.fy[i];
+      const start = def.radius + TUNE.shotRadius + 0.1;
+      launchBolt(
+        w,
+        enemies.x[i] + fx * start,
+        enemies.y[i] + fy * start,
+        fx,
+        fy,
+        def.params.boltSpeed,
+        def.params.boltDamage,
+        def.params.boltLife,
+      );
+      enemies.phase[i] = Phase.Seek;
+      enemies.timer[i] = def.params.shotGap;
+    }
+    return;
+  }
+
+  if (enemies.timer[i] > 0) enemies.timer[i] -= DT;
+
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  if (d2 <= 1e-12) {
+    drive(w, i, def, 0, 0);
+    return;
+  }
+
+  const d = Math.sqrt(d2);
+  const nx = dx / d;
+  const ny = dy / d;
+
+  let vx = 0;
+  let vy = 0;
+  if (d > def.params.standMax) {
+    vx = nx * def.speed;
+    vy = ny * def.speed;
+  } else if (d < def.params.standMin) {
+    vx = -nx * def.speed;
+    vy = -ny * def.speed;
+  }
+  drive(w, i, def, vx, vy);
+
+  if (d >= def.params.standMin && d <= def.params.standMax && enemies.timer[i] <= 0) {
+    enemies.fx[i] = nx;
+    enemies.fy[i] = ny;
+    enemies.phase[i] = Phase.Windup;
+    enemies.timer[i] = def.params.windup;
+    // The `Line` shape is the sniper's thin sight (DESIGN.md): drawn from the
+    // locked facing for as long as the body's timer says wind-up is left.
+    pushEvent(w, Ev.Telegraph, i, Tele.Line, enemies.x[i], enemies.y[i]);
+  }
+}
+
+/**
+ * Grenadier: walk to lob range, plant, and ring the player's feet.
+ *
+ * `lobRange` is how far it will throw and `lobMin` how close it will throw from;
+ * outside the band it walks (closing, or backing away when the player has inside
+ * itself on it — the same reasoning as the charger's `nearRange`: a threat with no
+ * room to be read is not a telegraph, it is just damage). Inside, it plants and
+ * lobs on `lobGap` seconds.
+ *
+ * The lob lands where the player was when it went up. The flight is the throw
+ * distance over `arcSpeed`, and the band's floor is four metres against a bomb that
+ * travels ten, so a ring only ever opens with at least 0.4 s of fill in it — read
+ * the ring, walk out of it, and the lob spent itself on empty floor. The ring
+ * announces itself at the landing point (`Tele.RingAt`, whose centre is the event's
+ * x/y) the tick the grenade leaves the body, and the grenade carries the fill.
+ */
+function lobRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+  const player = w.player;
+
+  if (enemies.timer[i] > 0) enemies.timer[i] -= DT;
+
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  if (d2 <= 1e-12) {
+    drive(w, i, def, 0, 0);
+    return;
+  }
+
+  const d = Math.sqrt(d2);
+  const nx = dx / d;
+  const ny = dy / d;
+
+  if (d > def.params.lobRange) {
+    drive(w, i, def, nx * def.speed, ny * def.speed);
+    return;
+  }
+  if (d < def.params.lobMin) {
+    drive(w, i, def, -nx * def.speed, -ny * def.speed);
+    return;
+  }
+
+  // In the band: plant, and lob on the beat. The ring and the grenade go out on the
+  // same tick, at the player's feet as read now — the point the dodge test walks
+  // out of, and the point the standing player is still on when the ring fills.
+  drive(w, i, def, 0, 0);
+
+  if (enemies.timer[i] <= 0) {
+    enemies.timer[i] = def.params.lobGap;
+    pushEvent(w, Ev.Telegraph, i, Tele.RingAt, player.x, player.y);
+    lobGrenade(
+      w,
+      enemies.x[i],
+      enemies.y[i],
+      nx,
+      ny,
+      def.params.arcSpeed,
+      d / def.params.arcSpeed,
+      def.params.blastDamage,
+      def.params.blastRadius,
+    );
+  }
+}
+
+/** Neighbours one heal pulse examines, the same kind of cap `SEP_CAP` is. */
+const HEAL_SCAN_CAP = 64;
+
+/** Seconds a healer re-reads for wounded allies when the last read found none. */
+const HEAL_RETRY = 0.5;
+
+/**
+ * Healer: escort, mend, and give ground.
+ *
+ * It does not attack the player — its whole job is the two seconds it takes a
+ * pack's wounds to knit back up. `healRange` metres of allies get `healAmount`
+ * back every `healGap` seconds — one pulse, one `Heal` event, whoever is standing
+ * inside it, capped at what their archetype starts with; when nothing in range is
+ * wounded it re-reads cheaply on `HEAL_RETRY` seconds rather than querying every
+ * tick. `fleeRadius` is the leash: inside it the healer runs straight away at full
+ * cruise, outside it walks back toward the fight, so it kites at the edge of the
+ * pack instead of either charging you or fleeing the arena.
+ *
+ * The pulse reads the tick's shared query buffer before the movement below can
+ * refill it, same one-buffer rule as everything else in this file.
+ */
+function supportRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+
+  if (enemies.timer[i] > 0) enemies.timer[i] -= DT;
+
+  if (enemies.timer[i] <= 0) {
+    const found = queryRadius(
+      w.hash,
+      enemies.x,
+      enemies.y,
+      enemies.alive,
+      enemies.x[i],
+      enemies.y[i],
+      def.params.healRange,
+      w.query,
+    );
+    const seen = found < HEAL_SCAN_CAP ? found : HEAL_SCAN_CAP;
+    let mended = false;
+    for (let k = 0; k < seen; k++) {
+      const j = w.query[k];
+      if (j === i || enemies.hp[j] <= 0) continue;
+      const cap = ENEMIES[enemies.kind[j]].hp;
+      if (enemies.hp[j] >= cap) continue;
+      const next = enemies.hp[j] + def.params.healAmount;
+      enemies.hp[j] = next > cap ? cap : next;
+      mended = true;
+    }
+    if (mended) {
+      // One event per pulse, not per mended body: the aura is one thing on screen
+      // even when it catches six bodies, and `b` carries its radius for the ring.
+      pushEvent(w, Ev.Heal, i, Math.round(def.params.healRange * 10), enemies.x[i], enemies.y[i]);
+      enemies.timer[i] = def.params.healGap;
+    } else {
+      enemies.timer[i] = HEAL_RETRY;
+    }
+  }
+
+  const player = w.player;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  if (d2 <= 1e-12) {
+    drive(w, i, def, 0, 0);
+    return;
+  }
+
+  const d = Math.sqrt(d2);
+  const nx = dx / d;
+  const ny = dy / d;
+  const sign = d < def.params.fleeRadius ? -1 : 1;
+  drive(w, i, def, nx * def.speed * sign, ny * def.speed * sign);
+}
+
+/**
  * Steer `vx`/`vy` through the crowd, then move.
  *
  * The shared half of every behaviour: personal space, a cap so a shove cannot make a body
@@ -569,32 +808,6 @@ export function armorAgainst(w: World, j: number, dirx: number, diry: number): n
   if (fx === 0 && fy === 0) return def.armor;
 
   return dirx * fx + diry * fy < -arc ? def.armor : def.armor * side;
-}
-
-/**
- * Take a hit off the player, gated by i-frames.
- *
- * The first hit spends the player's invulnerability, so a pack that arrives all at once
- * costs one hit rather than one per body — which is what keeps a horde of a thousand
- * survivable. It is also why an exploder's burst is timed to land before its hug does: two
- * sources of damage inside one half second is one source of damage.
- *
- * `trauma` is screen shake times ten, which is how the camera turns a hit into a jolt.
- */
-function hurtPlayer(w: World, dmg: number, trauma: number): void {
-  const player = w.player;
-  if (!player.alive || player.iframes > 0) return;
-
-  player.hp = player.hp > dmg ? player.hp - dmg : 0;
-  player.iframes = TUNE.hurtIframes;
-  // `a` is trauma x 10, which is how the camera turns this into shake.
-  pushEvent(w, Ev.Shake, trauma, 0, player.x, player.y);
-
-  if (player.hp <= 0) {
-    player.alive = false;
-    w.over = true;
-    pushEvent(w, Ev.Death, 0, 0, player.x, player.y);
-  }
 }
 
 /** Contact damage, gated by i-frames. `d2` is the squared distance from before it moved. */

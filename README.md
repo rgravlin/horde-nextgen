@@ -95,7 +95,23 @@ typecheck error rather than an enemy that quietly stands still. The fields with 
 behind them are `hp`, `speed`, `radius`, `armor`, `xp` (the shard the body drops) and
 `params`: `sepRadius`/`sepPush` for crowd separation through the spatial hash,
 `touchRange`/`touchDamage` for contact damage, which one i-frame window caps to a single
-hit however many bodies arrive. `accent` is for the renderer, which does not exist yet.
+hit however many bodies arrive. A behaviour's own numbers also live in `params` and are
+documented where the behaviour reads them — the ranged trio's band edges, wind-up, bolt
+speed/damage/life, lob range/arc speed/blast and heal range/beat/amount included.
+
+Ranged bodies spend themselves through the shared `enemyShots` pool (cap 512) that
+`src/sim/systems/enemyProjectiles.ts` flies after the enemy pass: a bolt is the segment it
+swept this tick and a grenade bursts at the end of its arc, exactly at the point its
+telegraph ring was drawn. Both respect the player's i-frames — against an invulnerable
+player a round passes through rather than being absorbed — and a telegraphed attack always
+buys the player the DESIGN.md 400 ms of warning before it lands.
+
+To make the archetype actually *arrive*, add its id to a `PACKS` row: the wave spawner
+walks those recipes in order, so a chapter's mix is knowable rather than drawn from luck.
+Which row you edit is a real choice — the browser scenarios only play the first waves, so
+a body put into the early rows changes what a scenario (and a new player) meets first.
+`accent` is the body's emissive core colour — the renderer reads it per archetype; bodies
+themselves stay dark matte (DESIGN.md "Palette").
 
 ### A power-up — `src/content/powerups.ts`
 
