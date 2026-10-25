@@ -12,10 +12,11 @@ import type { InputFrame } from './input';
 import { updateFx } from './fx';
 import { queryRadius, rebuild } from './spatialHash';
 import { canTravel } from './systems/obstacles';
+import { updateBoss } from './systems/boss';
 import { updateDrone } from './systems/drone';
 import { resolveBlasts, updateEnemies } from './systems/enemies';
 import { updateEnemyProjectiles } from './systems/enemyProjectiles';
-import { updateLevels } from './systems/levels';
+import { updateHazards } from './systems/levels';
 import { choosePick, updateChests, updatePickups } from './systems/pickups';
 import { tickPowerTimers } from './systems/powerups';
 import { updateWeapons } from './systems/weapons';
@@ -28,9 +29,9 @@ const EPS = 1e-6;
 /**
  * Advance the world by one tick.
  *
- * Order: timers -> player travel -> the chapter arc and its floor hazards -> broad-phase
- * rebuild -> enemy behaviours and contact damage -> the drone companion, if the run owns
- * one -> weapon fire, projectile movement and damage
+ * Order: timers -> player travel -> the chapter's floor hazards -> the chapter arc and the
+ * encounter it opens -> broad-phase rebuild -> enemy behaviours and contact damage -> the
+ * drone companion, if the run owns one -> weapon fire, projectile movement and damage
  * (a kill is resolved where the damage lands) -> the blasts those deaths queued ->
  * the enemy rounds and lobs -> the level-up pick -> pickups and XP -> wave spawns.
  * The grid is built before the passes that query it rather than after, so the
@@ -38,14 +39,15 @@ const EPS = 1e-6;
  * about to test, minus at most one tick of travel — which their query radius pads
  * for.
  *
- * The chapter arc runs before the rebuild rather than with the other late passes because
- * it is the one pass that *adds* bodies to the floor mid-tick — the encounter's bosses —
- * and a boss that is not in the grid the tick it arrives is a boss nothing can shoot for a
- * step. Its hazards want the same half of the tick: a crusher that fires here has its burst
- * paid out by the blast pass below, in the tick the tell ended, which is what the 0.45 s of
- * warning was bought for. Running it before the enemy pass also keeps a chapter's last
+ * The chapter's two passes run before the rebuild rather than with the other late passes
+ * because the arc is the one pass that *adds* bodies to the floor mid-tick — the encounter's
+ * bosses — and a boss that is not in the grid the tick it arrives is a boss nothing can shoot
+ * for a step. Its hazards want the same half of the tick: a crusher that fires here has its
+ * burst paid out by the blast pass below, in the tick the tell ended, which is what the 0.45 s
+ * of warning was bought for. Running them before the enemy pass also keeps a chapter's last
  * batch and its boss off the same tick, so the encounter reads as a change in what the
- * chapter is doing rather than as one more, larger pack.
+ * chapter is doing rather than as one more, larger pack. See `systems/levels.ts` (the floor)
+ * and `systems/boss.ts` (the encounter).
  *
  * The enemy projectiles get their own pass after the blasts, not inside the enemy
  * pass, for the same reason the blasts do: a bolt or a lob is a second damage
@@ -68,7 +70,8 @@ export function step(world: World, frame: InputFrame): void {
 
   updateTimers(world);
   updatePlayer(world, frame);
-  updateLevels(world);
+  updateHazards(world);
+  updateBoss(world);
   rebuild(world.hash, world.enemies.x, world.enemies.y, world.enemies.alive, world.enemies.cap);
 
   if (world.over) return;

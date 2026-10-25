@@ -30,9 +30,10 @@ import type { View } from '../render/renderer';
 import { createInputFrame } from '../sim/input';
 import { createRng, next } from '../sim/rng';
 import { step } from '../sim/step';
+import { bossesAlive } from '../sim/systems/boss';
 import { spawnEnemy } from '../sim/systems/enemies';
 import { awardXp, choosePick, reroll } from '../sim/systems/pickups';
-import { bossesAlive, startChapter } from '../sim/systems/levels';
+import { startChapter } from '../sim/systems/levels';
 import { createWorld, loadSlot, type World } from '../sim/world';
 import { createClock, createFrameReport, runFrame } from './loop';
 import type { Hud, HudCommand, HudView } from '../ui/hud';
@@ -80,6 +81,16 @@ export interface ForgeState {
     alive: boolean;
   };
   wave: { index: number; timeLeft: number; bossAlive: boolean };
+  /**
+   * The chapter's encounter, for the boss plate and the top-centre bar: `hp` and `maxHp` are
+   * the combined total across every body of the encounter (a chapter is allowed to end on more
+   * than one), and `name` is the lead body's id. All quiet when nothing is on the floor.
+   */
+  boss: { alive: boolean; name: string; hp: number; maxHp: number };
+  /** The encounter is dead and the next floor has not loaded yet. */
+  chapterComplete: boolean;
+  /** Every chapter has fallen, so the run is won. */
+  victory: boolean;
   score: number;
   kills: number;
   enemies: {
@@ -327,8 +338,12 @@ export function createApp(ports: AppPorts): App {
         alive: p.alive,
       },
       // The same read the chapter machine waits on, so the number a scenario asserts on
-      // and the number that ends the chapter cannot drift apart.
+      // and the number that ends the chapter cannot drift apart: `bossesAlive` is the flag
+      // the arc itself was written from this tick.
       wave: { index: w.wave.index, timeLeft: w.wave.timeLeft, bossAlive: bossesAlive(w) },
+      boss: { alive: w.boss.alive, name: w.boss.name, hp: w.boss.hp, maxHp: w.boss.maxHp },
+      chapterComplete: w.chapterComplete,
+      victory: w.victory,
       score: w.score,
       kills: w.kills,
       enemies: { count: enemies.count, byType, nearest },

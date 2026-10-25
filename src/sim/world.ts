@@ -443,6 +443,31 @@ export interface WaveState {
   clearTime: number;
 }
 
+/**
+ * The chapter's encounter, as the HUD's boss bar and the browser scenarios read it.
+ *
+ * One object refreshed once a tick by `systems/boss.ts` rather than a scan on every read:
+ * the bar wants the same number that ends the chapter, so there is one walk of the enemy
+ * pool per tick that decides both, and a scenario cannot be shown a boss the chapter
+ * machine has already stopped waiting for.
+ */
+export interface BossState {
+  /** Whether an encounter body is on the floor. What `bossesAlive` answers. */
+  alive: boolean;
+  /** Hit points left across every live body of the encounter. */
+  hp: number;
+  /** Their combined HP when the encounter walked in, so the bar has a full length. */
+  maxHp: number;
+  /** The lead body's name for the plate; empty while nothing is on the floor. */
+  name: string;
+  /**
+   * Boss bodies the chapter could not put on clear floor within reach. Nothing else in the
+   * sim can see that a chapter lost its encounter before it started, so it is counted rather
+   * than swallowed — the same reason `WaveState.skips` exists.
+   */
+  skips: number;
+}
+
 export interface World {
   readonly seed: number;
   rng: Rng;
@@ -457,6 +482,20 @@ export interface World {
   chapter: number;
   /** The run is over: the player died, so the game shows the summary. */
   over: boolean;
+  /**
+   * The chapter's encounter is dead and its floor is spent, so the run is standing between
+   * chapters. Set the tick the last boss falls and cleared when the next floor loads, which
+   * is what lets a chapter banner and a scenario both ask the same question: is this chapter
+   * over and not yet replaced?
+   */
+  chapterComplete: boolean;
+  /**
+   * Every chapter has fallen. The run is won: the drumbeat has stopped for good and the
+   * shell shows the victory sweep instead of the next chapter.
+   */
+  victory: boolean;
+  /** The encounter on the floor, read by the boss bar and the scenarios. */
+  boss: BossState;
   /**
    * Whether the player holds down the fire button (click-to-fire) or the sim
    * shoots on its own. Off here because it is a setting, not a sim default:
@@ -689,6 +728,9 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     kills: 0,
     chapter: 0,
     over: false,
+    chapterComplete: false,
+    victory: false,
+    boss: { alive: false, hp: 0, maxHp: 0, name: '', skips: 0 },
     autoFire: false,
     enemyNear: Infinity,
     nearest: -1,

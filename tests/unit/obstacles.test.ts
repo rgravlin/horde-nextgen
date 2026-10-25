@@ -6,7 +6,8 @@ import { createInputFrame, resetFrame } from '../../src/sim/input';
 import { MIN_THICK, PropKind, ZoneKind, acidAt, blocked, canTravel, installLayout, installZones, pointBlocked, pushOut, pushedX, pushedY } from '../../src/sim/systems/obstacles';
 import { step } from '../../src/sim/step';
 import { spawnEnemy } from '../../src/sim/systems/enemies';
-import { Phase, bossesAlive, startChapter } from '../../src/sim/systems/levels';
+import { bossesAlive } from '../../src/sim/systems/boss';
+import { Phase, startChapter } from '../../src/sim/systems/levels';
 import { Ev, Tele, TUNE, clearEvents, countAlive, countEvents, createWorld, findEvent, loadSlot, type World } from '../../src/sim/world';
 import { ShotKind, launchBolt, lobGrenade } from '../../src/sim/systems/enemyProjectiles';
 
@@ -48,7 +49,7 @@ function crate(x: number, y: number, s = 2) {
 /**
  * Put a floor under a test world and switch the chapter arc on.
  *
- * The arc matters: a hazard is paid out by `updateLevels`, and that pass only runs while
+ * The arc matters: a hazard is paid out by `updateHazards`, and that pass only runs while
  * a chapter is in progress — a fresh World has no floor by design, so a test that installs
  * geometry by hand has to say it is mid-chapter or the floor is scenery. Real runs get
  * this from `startChapter`, which installs a chapter's layout and hazards together.
