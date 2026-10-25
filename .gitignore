@@ -1,0 +1,14 @@
+# added by forge
+.forge-review/
+node_modules/
+.next/
+dist/
+build/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.turbo/
+.vite/
+.DS_Store
+*.log
