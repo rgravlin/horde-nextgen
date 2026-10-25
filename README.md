@@ -43,18 +43,34 @@ Add a `WeaponDef`.
 |---|---|
 | `rate` | shots per second: the hand's cooldown is `1 / (rate × stats.fireRate)` |
 | `dmg` | per round, scaled by falloff and `stats.dmg`, then reduced by the target's `armor` (floor 1) |
-| `spread` | half-angle in radians, drawn from `world.rng` per shot |
-| `speed`, `range` | flight; a round is tested as the segment it swept this tick, so nothing tunnels through a body |
-| `pierce` | bodies a round passes through after the first; a round never damages the same body twice |
-| `knockback` | m/s shove, which staggers the hit enemy for 3 ticks |
-| `falloff` | `[start, end, mult]` damage multiplier by distance flown |
-| `ammo` | `{mag, reload}`; an empty hand reloads on its own and cannot fire while it does |
+| `spread` | half-angle in radians, drawn from `world.rng` per shot. For `melee` it is the half-angle of the sweep instead, and takes no draw: the arc is the weapon's shape, not aim error |
+| `speed`, `range` | flight. A round is tested as the segment it swept this tick, so nothing tunnels through a body. `range` is the ray's length for `hitscan`, the sweep's reach for `melee` (measured to the target's body edge) and how far a shell is lobbed for `arc`; `speed` is 0 for the two kinds that resolve in one tick |
+| `pierce` | bodies a shot passes through after the first; a shot never damages the same body twice. For `melee` it is how many extra bodies the sweep may clip |
+| `knockback` | m/s shove, which staggers the hit enemy for 3 ticks. A sweep and a burst shove outward from their own centre, not along the aim |
+| `falloff` | `[start, end, mult]` damage multiplier by distance flown, held flat past `end`. An `arc` burst takes no falloff, so its three entries are equal |
+| `ammo` | `{mag, reload}`; an empty hand reloads on its own and cannot fire while it does. For `melee` and `arc` a magazine entry is one swing or one load |
+| `pellets` | rounds one trigger pull spawns, each with its own `spread` draw — the shotgun's cone |
+| `armorPen` | fraction of the target's armour ignored, taken off before the `armor` subtraction |
+| `charge` | `{time, speed, dmg}`: a held trigger builds a draw and looses at a full draw or the moment the button comes up, so a panicked tap still fires, flatter and weaker |
+| `aoe` | metres: the burst radius of an `arc` shell; everything overlapping it takes full damage |
 
-`fire` names the delivery path and only `'projectile'` has one yet: a weapon naming a kind
-the sim does not implement simply does not shoot. Ammo, cooldown and reload live on the
-hand (`world.slots[0..1]`), never on the def, so two guns never share a magazine. To hand
-one to the player in a test: `world.slots[1].weapon = i` plus its magazine — a swap refuses
-an empty hand.
+`fire` names the delivery path, and four of the seven kinds have one: `projectile` and
+`arc`, beside `hitscan` and `melee`, all of them in `src/sim/systems/projectiles.ts`. A
+weapon naming a kind the sim does not implement spends no ammo and makes no noise, so a
+half-finished kind reads as an empty gun rather than as a gun that works badly.
+
+Ammo, cooldown and reload live on the hand (`world.slots[0..1]`), never on the def, so
+two guns never share a magazine. Auto-fire (on by default, and the reason a run keeps
+shooting while the player is busy moving) aims at the nearest body, and for a shell it
+*leads* it: the burst is centred where that body will be when the shell arrives, at the
+distance that takes, because a 1.2 s flight aimed at a body's current footprint lands a
+whole flight behind the crowd it was fired at.
+
+To hand a weapon to the player: `world.slots[1].weapon = i` plus its magazine in a unit
+test — a swap refuses an empty hand — or `__forgeDebug.giveWeapon(id)` in a browser one.
+`tests/e2e/weapons-a.spec.ts` is where the grant path is pinned, because
+`forge-scenarios.json` has no step that evaluates JavaScript (its vocabulary is click,
+fill, press, wait, hold, mouse, shot, state) and no key grants a weapon.
 
 ### An enemy — `src/content/enemies.ts`, read by `src/sim/systems/enemies.ts`
 

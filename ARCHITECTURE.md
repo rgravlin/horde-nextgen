@@ -26,7 +26,7 @@ outside `src/sim` may decide gameplay outcomes.
 | Module | Owns | May import |
 |---|---|---|
 | `src/content/` | typed data only: `weapons.ts`, `enemies.ts`, `powerups.ts`, `levels.ts`, `types.ts` (the `WeaponDef`/`EnemyDef`/`PowerupDef`/`LevelDef` schemas, defined once) | nothing |
-| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,enemies,pickups,waves}.ts`, later `serialize.ts`, `replay.ts`, `config.ts` | `src/content` only |
+| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,projectiles,enemies,pickups,waves}.ts`, later `serialize.ts`, `replay.ts`, `config.ts` | `src/content` only |
 | `src/render/` | `renderer.ts` (WebGPURenderer + `renderer.init()`, backend probe), `camera.ts` (three-quarter chase cam, interpolation, shake), `instancing.ts` (one `InstancedMesh` per archetype + props), `particles.ts` (TSL compute particles), `post.ts` (`RenderPipeline`: bloom → chromatic → ACES), `lights.ts` (pooled point lights), `assets.ts` (glTF loads), `quality.ts` (Low/Med/High/Ultra knobs) | `three`, `three/webgpu`, `three/tsl`, read-only `sim`/`content` |
 | `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
 | `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
@@ -65,8 +65,11 @@ DOM/gamepad events ──▶ InputSampler ──(once per tick)──▶ InputFr
   cell 2) → enemy AI and contact damage → weapon fire, projectile flight and hits → the level-up pick →
   pickups/XP → wave spawns. The grid is built before the passes that query it, and a kill is resolved where the
   damage lands, so a corpse never spends a tick blocking the crowd or soaking a piercing shot.
-- Projectile flight lives in `systems/weapons.ts` next to the firing rules, because a round's damage, falloff,
-  pierce and knockback all come off its `WeaponDef`; `systems/` gains a file only when a pass has no home.
+- Delivery lives one file away from the trigger: `systems/weapons.ts` owns the hand, the cooldown, the magazine, the
+  draw and the aim, and hands the shot to `systems/projectiles.ts`, which owns everything after the trigger — the
+  swept-segment test for a round, the march for a ray, the arc of a sweep and the burst of a lobbed shell. Damage,
+  falloff, pierce and knockback still all come off the shot's `WeaponDef`, and the four paths share one `damage`
+  helper so a ray, a sweep and a burst that reach the same body for the same reason report the same number.
 - Iteration is by pool index, lowest index first, and randomness only comes from `world.rng`, so the order never
   depends on JS object or Map iteration.
 - One browser frame: `sampler.sample()` → drain accumulator with `step` → `render(alpha = acc/dt)` + `audio.drain()`

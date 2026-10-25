@@ -98,6 +98,8 @@ export const Ev = {
   Shake: 9,
   Death: 10,
   Error: 11,
+  /** A lobbed shell detonated: `a` is the weapon, `b` the burst radius x 10. */
+  Explosion: 12,
 } as const;
 
 /** One fixed-timestep tick, shared by the loop and the tests. */
@@ -184,6 +186,11 @@ export interface WeaponSlot {
   cooldown: number;
   /** Seconds of reload left. Above 0 the hand cannot fire. */
   reload: number;
+  /**
+   * Seconds of draw built on a hold-to-charge weapon (see ChargeDef), spent when
+   * the shot is loosed. Zero on every hand that does not charge.
+   */
+  charge: number;
 }
 
 /** Timer-driven spawn state for the current chapter. */
@@ -325,7 +332,7 @@ export function countAlive(p: Pool): number {
 /** A hand holding `weaponIndex`, loaded when there is a gun to load. */
 function createSlot(weaponIndex: number): WeaponSlot {
   const mag = weaponIndex >= 0 ? WEAPONS[weaponIndex].ammo.mag : 0;
-  return { weapon: weaponIndex, ammo: mag, cooldown: 0, reload: 0 };
+  return { weapon: weaponIndex, ammo: mag, cooldown: 0, reload: 0, charge: 0 };
 }
 
 export function createWorld(seed: number, opts: WorldOptions = {}): World {

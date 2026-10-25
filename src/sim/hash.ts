@@ -127,6 +127,7 @@ export function hashWorld(world: World): number {
     h = fnv32Word(h, slot.ammo);
     h = mixScalar(h, slot.cooldown);
     h = mixScalar(h, slot.reload);
+    h = mixScalar(h, slot.charge);
   }
   h = fnv32Byte(h, world.activeSlot);
   h = mixU8s(h, world.powerTiers);

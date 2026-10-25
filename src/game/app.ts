@@ -419,6 +419,7 @@ export function createApp(ports: AppPorts): App {
         hand.ammo = WEAPONS[index].ammo.mag;
         hand.reload = 0;
         hand.cooldown = 0;
+        hand.charge = 0;
         if (switched) world.activeSlot = slot;
         return true;
       },

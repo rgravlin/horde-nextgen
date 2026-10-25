@@ -21,5 +21,24 @@
       { "state": { "scene": "==playing" } },
       { "state": { "errors": "==0" } }
     ]
+  },
+  {
+    "name": "hunting",
+    "path": "/?seed=5",
+    "steps": [
+      { "wait": 4000 },
+      { "press": "Enter" },
+      { "wait": 600 },
+      { "state": { "scene": "==playing", "activeWeapon": "==pistol", "weapons.length": "==1" } },
+      { "mouse": [1040, 320, "down"] },
+      { "wait": 600 },
+      { "mouse": [1040, 320, "up"] },
+      { "hold": ["KeyD", 1500] },
+      { "mouse": [330, 300] },
+      { "wait": 4000 },
+      { "state": { "kills": ">0" } },
+      { "shot": "hunt" },
+      { "state": { "errors": "==0" } }
+    ]
   }
 ]
