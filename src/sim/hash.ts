@@ -94,6 +94,10 @@ export function hashPool(h: number, p: Pool): number {
   h = mixFloats(h, p.timer);
   h = mixFloats(h, p.fx);
   h = mixFloats(h, p.fy);
+  // The elite variant. Same reasoning as the behaviour slots above: two runs whose
+  // bodies differ only in which of them arrived as a bulwark are two different hordes,
+  // and the whole value of this fingerprint is that it notices.
+  h = mixU8s(h, p.elite);
   return h;
 }
 
@@ -144,6 +148,11 @@ export function hashWorld(world: World): number {
   }
   h = fnv32Byte(h, world.activeSlot);
   h = mixU8s(h, world.powerTiers);
+  // The timed buffs' clocks, not just which ones are owned: a run that spent its
+  // Adrenaline three seconds ago and one that still has it are one tier array apart and
+  // a different game, so the clock has to be in the fingerprint for the difference to
+  // show up anywhere.
+  h = mixFloats(h, world.powerTime);
   h = fnv32Byte(h, world.pendingLevelUp ? 1 : 0);
   h = fnv32Byte(h, world.rerollUsed ? 1 : 0);
   for (let i = 0; i < world.levelUpChoices.length; i++) h = fnv32Word(h, world.levelUpChoices[i]);
@@ -161,6 +170,9 @@ export function hashWorld(world: World): number {
   h = hashPool(h, world.shots);
   h = hashPool(h, world.enemyShots);
   h = hashPool(h, world.shards);
+  // A crate is state that outlives the tick it was made on, unlike the blast stack, so
+  // it is covered rather than skipped.
+  h = hashPool(h, world.chests);
 
   return h >>> 0;
 }

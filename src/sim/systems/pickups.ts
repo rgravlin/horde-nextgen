@@ -1,5 +1,5 @@
 /**
- * XP shards and the level-up offer.
+ * XP shards, supply crates and the level-up offer.
  *
  * A shard drifts, then homes once the player's magnet field reaches it, and paying
  * one in is what drives XP. Crossing a threshold builds three cards out of the
@@ -7,18 +7,31 @@
  * show a screen, it says one is owed, and only `playing` ticks (ARCHITECTURE.md
  * "Scene state machine"). Drawing, reroll and pick all read world.rng, so a replay
  * of the same seed and the same picks gets the same cards.
+ *
+ * A crate is the other half of how a run gets stronger, and it is *placed* by the wave
+ * spawner rather than here (see `dropChest`): a crate only earns its keep where the
+ * player has to walk somewhere on purpose, so it marks where a fresh pack is assembling
+ * off-screen — away from the player and only once the arena is busy enough that the
+ * detour has something to spend it on. What it pays is decided when it is opened rather
+ * than when it is dropped — a crate that rolled its contents on the floor could roll
+ * one the run had already maxed out, and a reward that cannot be spent is not one.
  */
 
 import { ENEMIES } from '../../content/enemies';
 import { POWERUPS } from '../../content/powerups';
+import { WEAPONS } from '../../content/weapons';
 import { nextInt } from '../rng';
-import { DT, Ev, TUNE, pushEvent, release, type World } from '../world';
+import { DT, Ev, TUNE, alloc, loadSlot, pushEvent, release, type World } from '../world';
+import { recomputeStats, startTime } from './powerups';
 
 /** Scratch for the offer draw: allocated with the module, reused by every offer. */
 const poolBuf = new Int32Array(POWERUPS.length);
 const offerBuf = new Int32Array(TUNE.pickCount);
 const prevBuf = new Int32Array(TUNE.pickCount);
 const nextBuf = new Int32Array(TUNE.pickCount);
+
+/** Scratch for a crate's gun draw. Kept apart from `poolBuf` so the two never overlap. */
+const gunBuf = new Int32Array(WEAPONS.length);
 
 /**
  * One tick of pickups: expire, magnet, collect.
@@ -239,7 +252,10 @@ export function choosePick(w: World, index: number): boolean {
  * Raise power-up `index` one tier and refold the stat block.
  *
  * Tier stops at the def's maxTier, so a sixth copy of anything does nothing rather
- * than stacking forever. Also the door chests and future drops come through.
+ * than stacking forever. Both doors come through here — the level-up card and a supply
+ * crate — so a card cannot be half-granted by whichever one picked it, and a timed dose
+ * picked while an earlier dose is still running is *re-dosed* at the new tier rather
+ * than adding a second copy of the same drug.
  */
 export function grantPowerup(w: World, index: number): boolean {
   if (index < 0 || index >= POWERUPS.length) return false;
@@ -248,24 +264,115 @@ export function grantPowerup(w: World, index: number): boolean {
   if (tier >= def.maxTier) return false;
 
   w.powerTiers[index] = tier + 1;
+  if (def.kind === 'timed' && def.duration !== undefined) startTime(w, index, def.duration);
   recomputeStats(w);
   return true;
 }
 
 /**
- * Rebuild the multipliers from the tiers held, in content order.
+ * Put a supply crate on the floor at (x, y).
  *
- * Reset-then-apply rather than multiply-on-grant: the result depends on which
- * power-ups are held and at what tier, never on the order they arrived or how many
- * ticks they have been held.
+ * Called from the wave spawner when a pack arrives, and only for a pack that is worth
+ * walking to: `TUNE.chestMinDist` from the player and into an arena already holding at
+ * least `TUNE.chestPackFloor` bodies. Both conditions matter. A crate at the player's
+ * feet is a thing they walked past, and a crate in an empty stretch has nothing to spend
+ * it on; between them they would turn the reward channel into noise.
+ *
+ * The crate carries no contents yet — `state` and `kind` are filled when it opens.
  */
-export function recomputeStats(w: World): void {
-  const stats = w.stats;
-  stats.dmg = 1;
-  stats.fireRate = 1;
-  stats.magnet = 0;
-  for (let i = 0; i < POWERUPS.length; i++) {
-    const tier = w.powerTiers[i];
-    if (tier > 0) POWERUPS[i].apply(stats, tier);
+export function dropChest(w: World, x: number, y: number): boolean {
+  const i = alloc(w.chests);
+  if (i < 0) return false;
+
+  const chests = w.chests;
+  chests.x[i] = x;
+  chests.y[i] = y;
+  chests.life[i] = TUNE.chestLife;
+  return true;
+}
+
+/**
+ * One tick of the crates: rot, then open.
+ *
+ * A crate opens on proximity rather than on a key because the answer it asks for is a
+ * routing one — do I break left toward that crate or keep backing up? — and a prompt the
+ * player has to stop to answer turns every reward into an interruption. It sits inside
+ * the same walk-over radius a shard uses, so a pickup is one verb.
+ */
+export function updateChests(w: World): void {
+  const chests = w.chests;
+  if (chests.count === 0 || !w.player.alive) return;
+
+  const open2 = TUNE.chestOpenRadius * TUNE.chestOpenRadius;
+
+  for (let i = 0; i < chests.cap; i++) {
+    if (chests.alive[i] === 0) continue;
+
+    chests.life[i] -= DT;
+    if (chests.life[i] <= 0) {
+      release(chests, i);
+      continue;
+    }
+
+    const dx = w.player.x - chests.x[i];
+    const dy = w.player.y - chests.y[i];
+    if (dx * dx + dy * dy > open2) continue;
+
+    pushEvent(w, Ev.Pickup, i, chests.kind[i], chests.x[i], chests.y[i]);
+    payChest(w);
+    release(chests, i);
   }
+}
+
+/**
+ * Hand out what the crate the player is standing on has decided to hold.
+ *
+ * Three payouts, in this order, and the order is the design: an empty second hand is
+ * worth more than another tier of something they already run, so a crate fills a hand
+ * first and only then upgrades. A run with two guns and everything maxed gets XP
+ * instead, because a crate that pays nothing reads as a bug even when it is correct.
+ *
+ * The gun is drawn from the ones the run does not already hold, so a crate cannot hand
+ * back a second copy of the pistol and feel like a letdown; the power-up is drawn from
+ * the ones still below their cap, which is the same pool the level-up cards draw from.
+ */
+function payChest(w: World): void {
+  const empty = w.slots.findIndex((hand) => hand.weapon < 0);
+  const guns = listGuns(w);
+
+  if (empty >= 0 && guns > 0) {
+    const hand = w.slots[empty];
+    loadSlot(hand, gunBuf[nextInt(w.rng, guns)]);
+    // The crate's gun becomes the one in play: a reward you have to swap hands to feel
+    // is a reward the player assumes never happened.
+    w.activeSlot = empty;
+    return;
+  }
+
+  const powers = listPowerups(w);
+  if (powers > 0) {
+    grantPowerup(w, poolBuf[nextInt(w.rng, powers)]);
+    return;
+  }
+
+  awardXp(w, 4);
+}
+
+/** The guns the run is not already holding, into `gunBuf`; how many there were. */
+function listGuns(w: World): number {
+  let n = 0;
+  for (let i = 0; i < WEAPONS.length; i++) {
+    if (w.slots[0].weapon === i || w.slots[1].weapon === i) continue;
+    gunBuf[n++] = i;
+  }
+  return n;
+}
+
+/** The power-ups still below their cap, into `poolBuf`; how many there were. */
+function listPowerups(w: World): number {
+  let n = 0;
+  for (let i = 0; i < POWERUPS.length; i++) {
+    if (w.powerTiers[i] < POWERUPS[i].maxTier) poolBuf[n++] = i;
+  }
+  return n;
 }

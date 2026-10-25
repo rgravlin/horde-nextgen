@@ -27,6 +27,13 @@ export const POOL_CAPS = {
    * grows.
    */
   blasts: 32,
+  /**
+   * Supply crates on the floor at once. Also not a TECH.md pool, and deliberately tiny:
+   * a crate is somewhere the player is asked to walk rather than a thing to count, so
+   * more than a dozen on screen at once would be a map full of prompts rather than a
+   * choice. 24 is already more than a run can route to.
+   */
+  chests: 24,
 } as const;
 
 /** Tuning defaults the sim reads. Content files may override per item later. */
@@ -86,6 +93,35 @@ export const TUNE = {
   /** Level-up cards, and reroll attempts before the offer is called unchanged. */
   pickCount: 3,
   rerollTries: 8,
+
+  /**
+   * m — the shortest detour a crate is worth. A drop beside the player's feet is not a
+   * reward, it is a thing they walked past; the whole point of a crate is that it asks
+   * the player to leave the ring they are in and go somewhere they chose.
+   */
+  chestMinDist: 6,
+  /** Bodies on the floor for a drop to be worth that walk. */
+  chestPackFloor: 14,
+  /** Chance a qualifying arriving pack marks itself with a crate, 0..1. */
+  chestChance: 0.25,
+  /** s a crate sits on the floor before it rots. */
+  chestLife: 30,
+  /** m — walk within this and it opens. */
+  chestOpenRadius: 1.2,
+  /**
+   * HP one lifesteal hit may pay back.
+   *
+   * A fraction alone turns a 140-damage railgun into immortality, which is why the
+   * cap exists rather than a smaller fraction: the power-up should be a reason to keep
+   * landing shots, not a licence to stop moving.
+   */
+  lifestealCap: 2,
+  /**
+   * Fraction of a body's travel a stasis field takes off it, at the field's full
+   * strength and inside its radius. `stats.slowField` is the fraction itself, so this
+   * constant is only the ceiling the read clamps to.
+   */
+  slowMax: 0.6,
 } as const;
 
 /**
@@ -206,6 +242,18 @@ export interface Pool {
    */
   readonly fx: Float32Array;
   readonly fy: Float32Array;
+  /**
+   * Elite variant id + 1, for the enemy pool only (0 is a plain body). See
+   * `content/levels.ts`: a chapter says which variants it rolls and how often, and
+   * `systems/enemies.ts` reads this back when it sets a body's HP, its touch damage and
+   * its gait. Kept in the pool rather than in a side table for the same reason `phase`
+   * is — a recycled slot has to start clean without anything remembering to clear it.
+   *
+   * The projectile pools never write it. They allocate it for the same reason they
+   * allocate the six behaviour slots above: so `alloc` can hand back a cleared slot
+   * without knowing what kind of pool it is.
+   */
+  readonly elite: Uint8Array;
 }
 
 /** Circular event buffer, oldest first, dropping the oldest on overflow. */
@@ -375,7 +423,14 @@ export interface World {
   activeSlot: number;
   /** Tier per POWERUPS index; 0 means not owned. */
   powerTiers: Uint8Array;
-  /** Multipliers folded from powerTiers; see recomputeStats in systems/pickups. */
+  /**
+   * Seconds left per POWERUPS index, for the timed entries only — 0 on everything the
+   * run keeps forever. A timed card stops being folded into `stats` when its clock
+   * runs out, which is what makes it a thing to spend rather than a permanent upgrade
+   * with a longer name (see `powerups.ts`).
+   */
+  powerTime: Float32Array;
+  /** Multipliers folded from powerTiers; see recomputeStats in systems/powerups. */
   stats: StatBlock;
   /** A level-up offer is waiting; the game freezes the sim and shows the cards. */
   pendingLevelUp: boolean;
@@ -388,6 +443,12 @@ export interface World {
   shots: Pool;
   enemyShots: Pool;
   shards: Pool;
+  /**
+   * Supply crates on the floor. `kind` is what the crate holds (a POWERUPS index, or a
+   * WEAPONS index when `state` says it is a gun) and `state` is which of the two;
+   * `life` is how long it waits before it rots. See `systems/pickups.ts`.
+   */
+  chests: Pool;
   /** Death blasts queued this tick, paid out by `resolveBlasts` (see systems/enemies). */
   blasts: BlastStack;
   hash: SpatialHash;
@@ -402,6 +463,7 @@ export interface WorldOptions {
   enemyProjectiles?: number;
   shards?: number;
   blasts?: number;
+  chests?: number;
   /** Arena is centred on the origin with this half-edge; 60 gives 120x120 m. */
   arenaHalf?: number;
   hashCell?: number;
@@ -454,6 +516,7 @@ export function createPool(name: string, cap: number): Pool {
     timer: new Float32Array(cap),
     fx: new Float32Array(cap),
     fy: new Float32Array(cap),
+    elite: new Uint8Array(cap),
   };
 }
 
@@ -478,6 +541,7 @@ export function alloc(p: Pool): number {
   p.timer[i] = 0;
   p.fx[i] = 0;
   p.fy[i] = 0;
+  p.elite[i] = 0;
   return i;
 }
 
@@ -586,6 +650,7 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     slots: [createSlot(0), createSlot(-1)],
     activeSlot: 0,
     powerTiers: new Uint8Array(POWERUPS.length),
+    powerTime: new Float32Array(POWERUPS.length),
     stats: baseStats(),
     pendingLevelUp: false,
     levelUpChoices: new Int32Array(3),
@@ -601,6 +666,7 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     shots: createPool('shots', opts.projectiles ?? POOL_CAPS.projectiles),
     enemyShots: createPool('enemyShots', opts.enemyProjectiles ?? POOL_CAPS.enemyProjectiles),
     shards: createPool('shards', opts.shards ?? POOL_CAPS.shards),
+    chests: createPool('chests', opts.chests ?? POOL_CAPS.chests),
     blasts: createBlastStack(opts.blasts ?? POOL_CAPS.blasts),
     hash: createSpatialHash(minX, minY, maxX, maxY, cell, enemyCap),
     events: {

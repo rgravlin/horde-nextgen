@@ -18,12 +18,20 @@
  *
  * Where it arrives is still random, and that part has to stay random: a fixed entry point
  * is a path a player memorises by wave three.
+ *
+ * The spawner also owns where supply crates appear. A pack landing off-screen is exactly
+ * the "somewhere worth walking to" a crate wants to mark, so `markHotDrop` reads each
+ * batch's landing point and, on a roll and only while the arena is already busy, leaves a
+ * crate there (see `systems/pickups.ts`). This is the one place that knows both halves of
+ * the question — is it far enough, is it crowded — so it lives here rather than at the
+ * point a kill resolves.
  */
 
 import { DEFAULT_ENEMY, ENEMIES, PACKS, enemyIndex } from '../../content/enemies';
-import { nextInt, range } from '../rng';
+import { next, nextInt, range } from '../rng';
 import { DT, TUNE, type World } from '../world';
 import { spawnEnemy } from './enemies';
+import { dropChest } from './pickups';
 
 /** Sides of the view rect tried before a batch is skipped. */
 const SIDE_TRIES = 4;
@@ -69,12 +77,19 @@ export function updateWaves(w: World): void {
   for (let n = 0; wave.timer <= 0 && n < BATCHES_PER_TICK; n++) {
     const size = batchSize(wave.index);
     const pack = packFor(wave.index);
-    for (let k = 0; k < size; k++) spawnOne(w, archetypeAt(pack, wave.cursor + k));
+    // Remember where the batch landed: a crate marks the spot a pack just came together,
+    // so the first body that got down is the entry the player would have to walk to.
+    let entry = -1;
+    for (let k = 0; k < size; k++) {
+      const slot = spawnOne(w, archetypeAt(pack, wave.cursor + k));
+      if (slot >= 0 && entry < 0) entry = slot;
+    }
     // Forward by the size of the batch that just went, not by one: the next pack starts
     // where this one ran out, which is what keeps a batch mixed instead of repeating the
     // same five archetypes in the same order every time.
     wave.cursor += size;
     wave.timer += spawnGap(wave.index);
+    markHotDrop(w, entry);
   }
 }
 
@@ -110,7 +125,7 @@ function archetypeAt(pack: readonly string[], cursor: number): number {
 
 /**
  * Put one body of `def` just outside the view rect, on a side and at a point drawn from
- * world.rng.
+ * world.rng, and return the enemy slot it landed in, or -1 when no side worked.
  *
  * A side that would land it outside the arena is re-picked, so hugging a wall does not
  * switch the horde off; the sides still inside the arena keep working. When no side works
@@ -119,7 +134,7 @@ function archetypeAt(pack: readonly string[], cursor: number): number {
  * the archetype's own body, because a 0.24 m splinter and a 0.62 m armored are not the
  * same thing to put down beside a wall.
  */
-function spawnOne(w: World, def: number): void {
+function spawnOne(w: World, def: number): number {
   const radius = ENEMIES[def].radius;
   const lowX = w.minX + WALL_MARGIN + radius;
   const highX = w.maxX - WALL_MARGIN - radius;
@@ -154,7 +169,33 @@ function spawnOne(w: World, def: number): void {
     }
 
     if (x < lowX || x > highX || y < lowY || y > highY) continue;
-    spawnEnemy(w, def, x, y);
-    return;
+    return spawnEnemy(w, def, x, y);
   }
+  return -1;
+}
+
+/**
+ * Mark a hot drop where a pack just arrived.
+ *
+ * A crate is only a reward if it sends the player somewhere on purpose, so it drops where
+ * a fresh pack is assembling rather than where the player already stands, and only when
+ * the arena is already busy enough that the detour has something to spend it on. A pack
+ * lands just outside the view rect, which is always at least `chestMinDist` out, so the
+ * crate is a walk by construction; the distance test is the guard for the small test
+ * arenas where a spawn cannot clear the rect and the batch lands closer (or nowhere).
+ *
+ * `count` is the cheap stand-in for "busy": this runs in its own slot after the damage
+ * passes, so it could query, but "enough bodies at once" is really the same question the
+ * whole spawner asks, and one comparison keeps the default (thinning) case free.
+ */
+function markHotDrop(w: World, entry: number): void {
+  if (entry < 0 || w.enemies.count < TUNE.chestPackFloor) return;
+
+  const x = w.enemies.x[entry];
+  const y = w.enemies.y[entry];
+  const dx = x - w.player.x;
+  const dy = y - w.player.y;
+  if (dx * dx + dy * dy < TUNE.chestMinDist * TUNE.chestMinDist) return;
+
+  if (next(w.rng) < TUNE.chestChance) dropChest(w, x, y);
 }

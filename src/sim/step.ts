@@ -10,9 +10,11 @@
 
 import type { InputFrame } from './input';
 import { queryRadius, rebuild } from './spatialHash';
+import { updateDrone } from './systems/drone';
 import { resolveBlasts, updateEnemies } from './systems/enemies';
 import { updateEnemyProjectiles } from './systems/enemyProjectiles';
-import { choosePick, updatePickups } from './systems/pickups';
+import { choosePick, updateChests, updatePickups } from './systems/pickups';
+import { tickPowerTimers } from './systems/powerups';
 import { updateWeapons } from './systems/weapons';
 import { updateWaves } from './systems/waves';
 import { DT, Ev, TUNE, pushEvent, type World } from './world';
@@ -24,7 +26,8 @@ const EPS = 1e-6;
  * Advance the world by one tick.
  *
  * Order: timers -> player movement and dash -> broad-phase rebuild -> enemy
- * behaviours and contact damage -> weapon fire, projectile movement and damage
+ * behaviours and contact damage -> the drone companion, if the run owns one ->
+ * weapon fire, projectile movement and damage
  * (a kill is resolved where the damage lands) -> the blasts those deaths queued ->
  * the enemy rounds and lobs -> the level-up pick -> pickups and XP -> wave spawns.
  * The grid is built before the passes that query it rather than after, so the
@@ -58,11 +61,17 @@ export function step(world: World, frame: InputFrame): void {
   if (world.over) return;
 
   updateEnemies(world);
+  // The drone goes between the enemy pass and the weapon pass on purpose: the enemy
+  // pass is what works out `nearest` and leaves the tick's query buffer filled, and
+  // the weapon pass is what moves and resolves the rounds it looses, so a drone round
+  // spends the same tick it was fired in rather than arriving a step late.
+  updateDrone(world);
   updateWeapons(world, frame);
   resolveBlasts(world);
   updateEnemyProjectiles(world);
   if (frame.pick > 0) choosePick(world, frame.pick - 1);
   updatePickups(world);
+  updateChests(world);
   updateWaves(world);
 }
 
@@ -76,6 +85,16 @@ function updateTimers(world: World): void {
   if (p.iframes > 0) {
     p.iframes -= DT;
     if (p.iframes < 0) p.iframes = 0;
+  }
+
+  // The timed power-ups' clocks, and the mend that runs while they are up. Both live
+  // before movement so a dose that expires this tick is already off the stat block when
+  // the speed and the fire-cooldown reads below consult it, rather than off next tick.
+  tickPowerTimers(world);
+
+  const regen = world.stats.regen;
+  if (regen > 0 && p.hp > 0 && p.hp < p.maxHp) {
+    p.hp = p.hp + regen * DT > p.maxHp ? p.maxHp : p.hp + regen * DT;
   }
 }
 
@@ -129,8 +148,9 @@ function updatePlayer(world: World, frame: InputFrame): void {
 
   if (!dashed) {
     if (moveLen > EPS) {
-      p.vx = moveX * TUNE.moveSpeed;
-      p.vy = moveY * TUNE.moveSpeed;
+      const speed = TUNE.moveSpeed * world.stats.speed;
+      p.vx = moveX * speed;
+      p.vy = moveY * speed;
     } else {
       p.vx = 0;
       p.vy = 0;
@@ -177,7 +197,11 @@ function startDash(world: World, moveLen: number, moveX: number, moveY: number):
   p.dashDirX = dx;
   p.dashDirY = dy;
   p.dashTime = TUNE.dashTime;
-  p.dashCd = TUNE.dashCooldown;
+  // `dashCd` is a multiplier under one, so Second Wind shortens the gap instead of
+  // subtracting a flat slice of it: a flat slice on a 1.5 s cooldown is either nothing
+  // or the whole cooldown, depending on the number, and the card reads differently on
+  // every dash length the game might later grow.
+  p.dashCd = TUNE.dashCooldown * world.stats.dashCd;
   p.iframes = TUNE.dashIframes;
   p.vx = dx * TUNE.dashSpeed;
   p.vy = dy * TUNE.dashSpeed;

@@ -30,10 +30,12 @@
  */
 
 import { ENEMIES, enemyIndex, type AiId, type EnemyDef } from '../../content/enemies';
+import { ELITES, type EliteDef } from '../../content/levels';
 import { range } from '../rng';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, Tele, TUNE, alloc, pushEvent, release, type World } from '../world';
 import { hurtPlayer, launchBolt, lobGrenade } from './enemyProjectiles';
+import { eliteRoster, rollElite, travelScale } from './powerups';
 
 /** One tick of one enemy's behaviour. */
 type AiFn = (w: World, i: number) => void;
@@ -84,6 +86,25 @@ const MAX_BLAST_CHAIN = 4;
 const GOLDEN_ANGLE = 2.399_963_229_728_653;
 
 /**
+ * How far the body being stepped through is allowed to travel this tick, as a fraction
+ * of its own velocity.
+ *
+ * One module-scratch scalar rather than an argument, for the same reason `w.blasts.depth`
+ * and `chainHits` are scratch: it is a fact about the body currently being handled, it
+ * never outlives the tick, and threading it through `drive` and `face` and the four
+ * behaviours that call `advance` would put a number about *slowness* in six signatures
+ * that have nothing to do with slowness. Written once per body at the top of the loop in
+ * `updateEnemies`, read once per travel step in `advance`.
+ */
+let travel = 1;
+
+/** The variant a body came in as, or undefined for a plain one. */
+function eliteOf(w: World, i: number): EliteDef | undefined {
+  const at = w.enemies.elite[i];
+  return at === 0 ? undefined : ELITES[at - 1];
+}
+
+/**
  * Put an enemy of `def` at (x, y), healthy and with its archetype's HP.
  *
  * Shared by the wave spawner, the debug spawn hook and the tests, so a spawned enemy
@@ -102,7 +123,16 @@ export function spawnEnemy(w: World, def: number, x: number, y: number): number 
   enemy.x[i] = px;
   enemy.y[i] = py;
   enemy.kind[i] = def;
-  enemy.hp[i] = shape.hp;
+
+  // The variant is rolled here rather than in the spawner because three doors put bodies
+  // down (the wave clock, the debug hook and a splitter's children) and only the last one
+  // would remember to ask. `rollElite` draws nothing on a chapter that declares no
+  // variants, so the seeded runs that predate them are untouched.
+  const variant = rollElite(w, eliteRoster(w));
+  const elite = variant >= 0 ? ELITES[variant] : undefined;
+  if (elite !== undefined) enemy.elite[i] = variant + 1;
+
+  enemy.hp[i] = elite === undefined ? shape.hp : shape.hp * elite.hp;
 
   // A body arrives looking at the player, which is the honest default — it is what it
   // will be walking toward — and it means directional armour has something to read on the
@@ -165,6 +195,14 @@ export function updateEnemies(w: World): void {
     // The body's own clock, which is what the weave swings on: a body that arrives late is
     // already mid-swing rather than starting its sway from zero like a clone.
     enemies.age[i] += DT;
+
+    // How far this body may get this tick, written once here for every travel step it
+    // takes (a staggering body takes one, a behaviour that steers and drives takes one, a
+    // charger's dash takes one and its follow-up walk another). Measured before anything
+    // moved, for the same reason `d2` above is: the stasis field asks where the body *was*
+    // relative to the player, and answering it after the walk is a field that reaches half
+    // a metre short of where it looks like it does.
+    travel = travelScale(w, enemies.x[i], enemies.y[i], eliteOf(w, i)?.gait ?? 1);
 
     if (enemies.state[i] > 0) {
       enemies.state[i]--;
@@ -771,8 +809,10 @@ function face(w: World, i: number, def: EnemyDef, vx: number, vy: number): void 
 /** One tick of travel, kept inside the arena so a pack cannot flank through a wall. */
 function advance(w: World, i: number, def: EnemyDef): void {
   const enemies = w.enemies;
-  enemies.x[i] += enemies.vx[i] * DT;
-  enemies.y[i] += enemies.vy[i] * DT;
+  // `travel` is this body's fraction, set once per body in `updateEnemies` — see there
+  // for why it is a module slot rather than an argument. At 1 it costs one multiply.
+  enemies.x[i] += enemies.vx[i] * DT * travel;
+  enemies.y[i] += enemies.vy[i] * DT * travel;
   enemies.x[i] = Math.min(Math.max(enemies.x[i], w.minX + def.radius), w.maxX - def.radius);
   enemies.y[i] = Math.min(Math.max(enemies.y[i], w.minY + def.radius), w.maxY - def.radius);
 }
@@ -810,7 +850,17 @@ export function armorAgainst(w: World, j: number, dirx: number, diry: number): n
   return dirx * fx + diry * fy < -arc ? def.armor : def.armor * side;
 }
 
-/** Contact damage, gated by i-frames. `d2` is the squared distance from before it moved. */
+/** Metres a Hot Plate pulse reaches around the player. */
+const THORNS_REACH = 2.4;
+
+/**
+ * Contact damage, gated by i-frames, and the Hot Plate's answer to it.
+ *
+ * The pulse is gated on the same i-frame window as the hug rather than on the body that
+ * triggered it: a crowd that piles in costs one thorns pulse, not one per body, because
+ * the gate at the top returns for everyone after the first touch. `d2` is the squared
+ * distance from before either of them moved.
+ */
 function contact(w: World, def: EnemyDef, d2: number): void {
   const player = w.player;
   if (!player.alive || player.iframes > 0) return;
@@ -818,7 +868,48 @@ function contact(w: World, def: EnemyDef, d2: number): void {
   const reach = TUNE.playerRadius + def.radius + def.params.touchRange;
   if (d2 > reach * reach) return;
 
+  // The hug goes through the one player-damage gate, so armour, the barrier and a
+  // curse's fragility read the same for a body's touch as for a bolt's.
   hurtPlayer(w, def.params.touchDamage, 3);
+
+  const thorns = w.stats.thorns;
+  if (thorns > 0) thornsPulse(w, thorns);
+}
+
+/**
+ * Hot Plate: every body inside a short ring around the player pays when the player is
+ * hit — the explosion a thorns power-up is meant to read as. It goes through armour and
+ * finishes bodies with `killEnemy`, so a pulse spent in a crowd actually thins it rather
+ * than only bruising it.
+ *
+ * It spends the tick's query buffer, which is free here: contact runs after the body's
+ * own steering has finished querying it, and the next body refills the buffer before it
+ * reads anything.
+ */
+function thornsPulse(w: World, thorns: number): void {
+  const enemies = w.enemies;
+  const found = queryRadius(
+    w.hash,
+    enemies.x,
+    enemies.y,
+    enemies.alive,
+    w.player.x,
+    w.player.y,
+    THORNS_REACH,
+    w.query,
+  );
+
+  for (let k = 0; k < found; k++) {
+    const j = w.query[k];
+    if (enemies.hp[j] <= 0) continue;
+
+    const def = ENEMIES[enemies.kind[j]];
+    let dealt = thorns - def.armor;
+    if (dealt < 1) dealt = 1;
+    enemies.hp[j] -= dealt;
+    pushEvent(w, Ev.Hit, -1, j, enemies.x[j], enemies.y[j]);
+    if (enemies.hp[j] <= 0) killEnemy(w, j);
+  }
 }
 
 /**

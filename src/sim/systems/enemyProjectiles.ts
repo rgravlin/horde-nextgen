@@ -24,10 +24,11 @@
  * `enemies.ts` triggers shots from this file, this file spends them.
  *
  * Nothing here allocates: shots come out of the pool, and the only reads of the
- * world are the pools and the player.
+ * world are the pools, the player and the run's folded stat block.
  */
 
 import { DT, Ev, TUNE, alloc, pushEvent, release, type World } from '../world';
+import { absorbIncoming } from './powerups';
 
 /** The two delivery shapes, in the `enemyShots` pool's `kind` slot. */
 export const ShotKind = {
@@ -52,13 +53,22 @@ const GRENADE_TRAUMA = 8;
  * for: they buy the crossing, and a bolt tested against an invulnerable player is
  * ignored rather than absorbed, so it flies on past.
  *
+ * What the hit costs is `absorbIncoming`, the one place the run's plate, its barrier
+ * and a curse's fragility are folded in, so a hug, a bolt and a lob all pay the same
+ * numbers. A fully drunk hit still spends the i-frame window: the barrier took it, and
+ * a window that only closed on damage that reached HP would let a shield be punched
+ * through by every round in a volley. With no plate, no barrier and no curse the
+ * helper hands back `dmg` untouched, so the seeded runs that predate those cards are
+ * bit-for-bit the runs they already were.
+ *
  * `trauma` is screen shake times ten, which is how the camera turns a hit into a jolt.
  */
 export function hurtPlayer(w: World, dmg: number, trauma: number): void {
   const player = w.player;
   if (!player.alive || player.iframes > 0) return;
 
-  player.hp = player.hp > dmg ? player.hp - dmg : 0;
+  const cost = absorbIncoming(w, dmg);
+  player.hp = player.hp > cost ? player.hp - cost : 0;
   player.iframes = TUNE.hurtIframes;
   // `a` is trauma x 10, which is how the camera turns this into shake.
   pushEvent(w, Ev.Shake, trauma, 0, player.x, player.y);

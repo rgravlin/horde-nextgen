@@ -31,6 +31,7 @@ import { WEAPONS, type WeaponDef } from '../../content/weapons';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, TUNE, pushEvent, release, type World } from '../world';
 import { armorAgainst, killEnemy } from './enemies';
+import { lifesteal, rollCrit } from './powerups';
 import { applyBurn, throughArmor } from './status';
 
 /** Metres of per-tick travel the hit query pads for, beyond the widest body. */
@@ -117,7 +118,13 @@ function damage(
   // knows the direction its damage travelled, so one call covers all seven.
   const armor = armorAgainst(w, j, dirx, diry) * (1 - pen);
 
-  enemies.hp[j] -= throughArmor(armor, dmg * scale, scale);
+  // Crit is one rng draw folded onto the raw damage and lifesteal mends off what the hit
+  // actually took off the body. Both read neutral (crit 1, lifesteal 0) unless a run owns
+  // the card, and at neutral neither draws a number nor writes the player — so a run with
+  // no Weak Spot or Life Tap keeps the exact seeded streams it had before either existed.
+  const dealt = throughArmor(armor, dmg * rollCrit(w) * scale, scale);
+  enemies.hp[j] -= dealt;
+  lifesteal(w, dealt);
 
   // `a` is the projectile slot, `b` the enemy slot: enough for a tracer, an impact
   // burst and a damage number without a per-hit object. Pushed before the kill so a
