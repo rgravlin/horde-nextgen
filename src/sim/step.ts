@@ -9,10 +9,13 @@
  */
 
 import type { InputFrame } from './input';
+import { updateFx } from './fx';
 import { queryRadius, rebuild } from './spatialHash';
+import { canTravel } from './systems/obstacles';
 import { updateDrone } from './systems/drone';
 import { resolveBlasts, updateEnemies } from './systems/enemies';
 import { updateEnemyProjectiles } from './systems/enemyProjectiles';
+import { updateLevels } from './systems/levels';
 import { choosePick, updateChests, updatePickups } from './systems/pickups';
 import { tickPowerTimers } from './systems/powerups';
 import { updateWeapons } from './systems/weapons';
@@ -25,15 +28,24 @@ const EPS = 1e-6;
 /**
  * Advance the world by one tick.
  *
- * Order: timers -> player movement and dash -> broad-phase rebuild -> enemy
- * behaviours and contact damage -> the drone companion, if the run owns one ->
- * weapon fire, projectile movement and damage
+ * Order: timers -> player travel -> the chapter arc and its floor hazards -> broad-phase
+ * rebuild -> enemy behaviours and contact damage -> the drone companion, if the run owns
+ * one -> weapon fire, projectile movement and damage
  * (a kill is resolved where the damage lands) -> the blasts those deaths queued ->
  * the enemy rounds and lobs -> the level-up pick -> pickups and XP -> wave spawns.
  * The grid is built before the passes that query it rather than after, so the
  * collision and separation tests read a grid that matches the positions they are
  * about to test, minus at most one tick of travel — which their query radius pads
  * for.
+ *
+ * The chapter arc runs before the rebuild rather than with the other late passes because
+ * it is the one pass that *adds* bodies to the floor mid-tick — the encounter's bosses —
+ * and a boss that is not in the grid the tick it arrives is a boss nothing can shoot for a
+ * step. Its hazards want the same half of the tick: a crusher that fires here has its burst
+ * paid out by the blast pass below, in the tick the tell ended, which is what the 0.45 s of
+ * warning was bought for. Running it before the enemy pass also keeps a chapter's last
+ * batch and its boss off the same tick, so the encounter reads as a change in what the
+ * chapter is doing rather than as one more, larger pack.
  *
  * The enemy projectiles get their own pass after the blasts, not inside the enemy
  * pass, for the same reason the blasts do: a bolt or a lob is a second damage
@@ -56,6 +68,7 @@ export function step(world: World, frame: InputFrame): void {
 
   updateTimers(world);
   updatePlayer(world, frame);
+  updateLevels(world);
   rebuild(world.hash, world.enemies.x, world.enemies.y, world.enemies.alive, world.enemies.cap);
 
   if (world.over) return;
@@ -73,6 +86,10 @@ export function step(world: World, frame: InputFrame): void {
   updatePickups(world);
   updateChests(world);
   updateWaves(world);
+  // Last, and only while the run is alive: the particle field is built from the events
+  // this tick produced, so it has to run after every pass that writes one, and a frozen
+  // world freezes its sparks with it (DESIGN.md "the game freezes").
+  updateFx(world);
 }
 
 /** Tick down every cooldown and timer, before anything reads them. */
@@ -157,16 +174,32 @@ function updatePlayer(world: World, frame: InputFrame): void {
     }
   }
 
-  p.x += p.vx * DT;
-  p.y += p.vy * DT;
-
-  // Arena clamp: the centre never leaves the bounds and stays playerRadius inside
-  // them, which keeps the whole body in the arena.
+  // Travel, then the arena clamp.
+  //
+  // Cover is resolved one axis at a time and each axis is a sweep of the tick's whole step,
+  // not a check on the destination: a dash crosses 0.37 m in a tick and a wall is 1.2 m
+  // thick, so an endpoint test would put a dash on the far side of it. An axis that hits is
+  // dropped rather than shortened, which is what lets a body slide along a wall instead of
+  // sticking to it, and it is the same rule `advance` applies to every enemy, so the player
+  // and the horde are stopped by the same geometry in the same way.
   const r = TUNE.playerRadius;
-  if (p.x < world.minX + r) p.x = world.minX + r;
-  else if (p.x > world.maxX - r) p.x = world.maxX - r;
-  if (p.y < world.minY + r) p.y = world.minY + r;
-  else if (p.y > world.maxY - r) p.y = world.maxY - r;
+  const stepX = p.vx * DT;
+  const stepY = p.vy * DT;
+
+  if (stepX !== 0) {
+    let nx = p.x + stepX;
+    if (nx < world.minX + r) nx = world.minX + r;
+    else if (nx > world.maxX - r) nx = world.maxX - r;
+    if (canTravel(world.props, p.x, p.y, nx - p.x, 0, r)) p.x = nx;
+    else p.vx = 0;
+  }
+  if (stepY !== 0) {
+    let ny = p.y + stepY;
+    if (ny < world.minY + r) ny = world.minY + r;
+    else if (ny > world.maxY - r) ny = world.maxY - r;
+    if (canTravel(world.props, p.x, p.y, 0, ny - p.y, r)) p.y = ny;
+    else p.vy = 0;
+  }
 }
 
 /**

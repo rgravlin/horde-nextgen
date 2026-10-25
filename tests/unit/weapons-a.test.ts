@@ -141,8 +141,10 @@ describe('weapon data', () => {
 
     // The enemy table is pinned the same way the weapon one is, so that adding an archetype
     // is a decision made here rather than a drift. What each behaviour does is pinned in
-    // tests/unit/enemies-a.test.ts (melee five) and tests/unit/enemies-b.test.ts (ranged
-    // trio); this only guards the shape of the data.
+    // tests/unit/enemies-a.test.ts (melee five), tests/unit/enemies-b.test.ts (ranged
+    // trio) and tests/unit/bosses.test.ts (the three encounters); this only guards the
+    // shape of the data. The last three carry `boss`, which takes them out of the wave
+    // recipes — an encounter a chapter ends on is not also drumbeat fodder.
     expect(ENEMIES.map((d) => d.id)).toEqual([
       'chaser',
       'swarmling',
@@ -154,7 +156,20 @@ describe('weapon data', () => {
       'shooter',
       'grenadier',
       'healer',
+      'broodmother',
+      'matron',
+      'atlas',
     ]);
+    expect(ENEMIES.filter((d) => d.boss).map((d) => d.id)).toEqual([
+      'broodmother',
+      'matron',
+      'atlas',
+    ]);
+    // A boss is allowed to be big; nothing else is, because the hit queries pad for the
+    // widest body in the table (HIT_PAD) and a 3 m trash body would widen every shot.
+    for (const def of ENEMIES) {
+      if (!def.boss) expect(def.radius, def.id).toBeLessThanOrEqual(0.7);
+    }
   });
 });
 

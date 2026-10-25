@@ -117,6 +117,31 @@ themselves stay dark matte (DESIGN.md "Palette").
 
 Add a `PowerupDef` with `maxTier` and `apply(stats, tier)`. Granting one refolds every owned
 power-up into `world.stats` from scratch, so a multiplier never depends on the order the
-grants arrived in, and a grant past `maxTier` does nothing. Levels are data too
-(`levels.ts`), and there is no level file yet: the wave spawner runs off `TUNE` until
-chapter scripts land.
+grants arrived in, and a grant past `maxTier` does nothing.
+
+### A level — `src/content/levels.ts`, read by `src/sim/systems/levels.ts`
+
+A chapter is a floor plan, a wave script and an elite roster, and `startChapter` installs all
+three before the wave clock starts. Add a `LevelDef` to `LEVELS` and the campaign plays it.
+
+The fields with behaviour behind them: `size` is the arena's half-extents in metres — a World
+builds 120×120 m of floor and a chapter claims a square of it, and the band the game keeps
+itself inside is 40 to 60 (under about 40 the wave spawner runs out of room to arrive in).
+`palette` is the fog and key-light tint, read once per chapter. `props` is cover, authored
+with `wall`/`crate`/`tank`/`pillar`; `hazards` are the two floor zones, `acid` at `dps` a
+second and `crusher` telling for `warn` seconds before it hits for `dps` every `gap` seconds.
+
+Cover is one code path — `src/sim/systems/obstacles.ts` — for all four shapes: a body or a
+round is a circle, a prop is a box or a circle, and what is tested is the segment the mover
+sweeps in one tick at its own radius. Bodies slide along walls instead of pathing around
+them, rounds from both sides retire at the first footprint they enter, and `pointBlocked` is
+what a spawner asks before it puts a body down. A prop thinner than 1.2 m through the middle
+is refused when the chapter loads and counted in `props.dropped`, because under that a dash
+crosses the whole thing in one tick — which is also why a column carries its radius next to
+its diameter: the box around a pillar is not the pillar.
+
+Two things a layout has to leave clear: the middle of the floor, because that is where a run
+is dropped and a chapter may not open by charging the player for the floor he was put onto —
+`tests/unit/obstacles.test.ts` fails a chapter that drops him inside cover or standing in a
+pool — and the twelve metres straight down +x from it, which the browser scenarios walk with
+a held key.

@@ -390,15 +390,19 @@ describe('wave recipes', () => {
       expect(seen.has(id), `${id} should reach the horde through the recipes`).toBe(true);
     }
 
-    // The 512-slot round pool was used and drained, never approached — and a full
-    // chapter crossed every archetype the roster owns, which is how the slice
-    // reaches DESIGN.md's "8+ archetypes" bar through recipes rather than by luck.
-    // Equality, not just the floor: a future archetype that no recipe names would
-    // fail here, and a chapter that cannot show all ten is a recipe bug.
+    // The 512-slot round pool was used and drained, never approached.
     expect(maxShots).toBeGreaterThan(0);
     expect(maxShots).toBeLessThan(64);
-    expect(seen.size).toBeGreaterThanOrEqual(8);
-    expect(seen.size).toBe(ENEMIES.length);
+
+    // And a full chapter crossed every archetype the drumbeat is allowed to carry.
+    // `boss` bodies are excluded rather than forgiven: an end-of-level encounter is not
+    // also wave fodder, so the recipes stop short of them and tests/unit/bosses.test.ts
+    // pins the door they do come through. Equality over the trash set rather than a floor:
+    // a future archetype that no recipe names would fail here, and so would a chapter that
+    // cannot show one.
+    const drumbeat = ENEMIES.filter((d) => !d.boss);
+    expect(seen.size).toBe(drumbeat.length);
+    for (const def of drumbeat) expect(seen.has(def.id), def.id).toBe(true);
     expect(w.errors).toBe(0);
   });
 });

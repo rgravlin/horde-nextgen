@@ -31,6 +31,7 @@
 
 import { ENEMIES, enemyIndex, type AiId, type EnemyDef } from '../../content/enemies';
 import { ELITES, type EliteDef } from '../../content/levels';
+import { canTravel, pointBlocked, pushOut, pushedX, pushedY } from './obstacles';
 import { range } from '../rng';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, Tele, TUNE, alloc, pushEvent, release, type World } from '../world';
@@ -59,6 +60,13 @@ const AI: Record<AiId, AiFn> = {
   shooter: standoffShoot,
   grenadier: lobRunner,
   healer: supportRunner,
+  // The three end-of-level encounters. They are behaviours rather than reskinned bodies
+  // because each one asks for an answer the trash already taught, turned up: kill it away
+  // from the crowd it keeps breeding, leave the ring, or deal with the support while the
+  // shooter is still shooting.
+  brute: slamRunner,
+  brooder: broodRunner,
+  matron: matronRunner,
 };
 
 /** Separation stops paying for itself past this many neighbours examined. */
@@ -118,8 +126,19 @@ export function spawnEnemy(w: World, def: number, x: number, y: number): number 
   if (i < 0) return -1;
   const enemy = w.enemies;
   const shape = ENEMIES[def];
-  const px = Math.min(Math.max(x, w.minX + shape.radius), w.maxX - shape.radius);
-  const py = Math.min(Math.max(y, w.minY + shape.radius), w.maxY - shape.radius);
+  let px = Math.min(Math.max(x, w.minX + shape.radius), w.maxX - shape.radius);
+  let py = Math.min(Math.max(y, w.minY + shape.radius), w.maxY - shape.radius);
+
+  // A body put down inside cover comes out of the cover on the far side, which is the one
+  // arrival this game has no warning for: the telegraphs all face the other way. So a spawn
+  // point that is not clear is moved to the nearest one that is, and a spawn point with no
+  // clear room within eight metres still puts the body down — a wave refused for want of a
+  // doorway would empty a chapter silently, and an empty chapter is the harder bug to see.
+  if (w.props.n > 0 && pointBlocked(w.props, px, py, shape.radius) && pushOut(w.props, shape.radius, px, py)) {
+    px = pushedX();
+    py = pushedY();
+  }
+
   enemy.x[i] = px;
   enemy.y[i] = py;
   enemy.kind[i] = def;
@@ -156,6 +175,13 @@ export function spawnEnemy(w: World, def: number, x: number, y: number): number 
   // swinging as one. Cheaper than a draw, and it does not shift the random stream that
   // every seeded test downstream of here reads.
   if ((shape.params.swayAmp ?? 0) > 0) enemy.timer[i] = (i * GOLDEN_ANGLE) % (Math.PI * 2);
+
+  // A body whose damage arrives as a brood has its first beat wound at spawn rather than
+  // left at zero: a boss that looses children on the tick it appears never gives the player
+  // the seconds the fight is won in, and the whole lesson is "deal with it before the brood
+  // lands". Only the brooder declares `spawnGap`, so nothing else's clock moves.
+  const beat = shape.params.spawnGap;
+  if (beat !== undefined) enemy.timer[i] = beat;
 
   pushEvent(w, Ev.Spawn, i, def, px, py);
   return i;
@@ -711,6 +737,248 @@ function supportRunner(w: World, i: number): void {
   drive(w, i, def, nx * def.speed * sign, ny * def.speed * sign);
 }
 
+/** True on the tick one body's `gap`-second beat turns over. */
+function onBeat(age: number, gap: number): boolean {
+  return Math.floor((age - DT) / gap) !== Math.floor(age / gap);
+}
+
+/**
+ * Atlas: press to a ring, walk it, and slam whoever is standing inside the ring.
+ *
+ * The armored's ranged-orbit cousin, and the chapter's last word on the same lesson: the
+ * way through a wall is round it. Its plate covers 57° either side of its facing and keeps
+ * a quarter of itself on the flank, and its facing lags a third of a second behind where it
+ * is going while it circles a 5.5 m ring at near cruise — so the gap in the shield is real,
+ * widening, and has to be *walked* into rather than reached by one step sideways.
+ *
+ * The slam is centred on the body, which is the half of it that makes it a decision and not
+ * a tax. It is spent only when the player is inside the burst's own reach, so it never
+ * fires into empty floor the way a telegraphed weapon has to in order to look like one, and
+ * its reach stops short of the ring it walks: standing out at band range is safe, crowding
+ * it is not, and the 450 ms flash is long enough to walk from the middle of the circle to
+ * outside it at the player's own speed. It also pays out through the blast stack, so the
+ * escort walking alongside it catches the burst too.
+ */
+function slamRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+
+  if (enemies.phase[i] === Phase.Windup) {
+    // Feet off the throttle for the whole flash — the charger's bargain, and the reason a
+    // 4.6 m ring is answerable: a body that draws a circle does not move while it fills.
+    enemies.vx[i] = 0;
+    enemies.vy[i] = 0;
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      queueBlast(w, enemies.x[i], enemies.y[i], def.params.blastRadius, def.params.blastDamage, 0);
+      enemies.phase[i] = Phase.Seek;
+      enemies.timer[i] = def.params.slamGap;
+    }
+    return;
+  }
+
+  if (enemies.timer[i] > 0) enemies.timer[i] -= DT;
+
+  const player = w.player;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  if (d2 <= 1e-12) {
+    drive(w, i, def, 0, 0);
+    return;
+  }
+
+  const d = Math.sqrt(d2);
+  const nx = dx / d;
+  const ny = dy / d;
+  const ring = def.params.standoff;
+  // Sideways drift plus a spring on the ring, the armored's own formula: it holds the
+  // distance rather than sliding past it, so a player who runs is followed and a player who
+  // stands still gets walked round.
+  const orbit = def.params.orbit;
+  const spin = (i & 1) === 0 ? 1 : -1;
+  const drift = (d - ring) * 2;
+  const speed = def.speed;
+  drive(
+    w,
+    i,
+    def,
+    (-ny * orbit * spin + nx * drift) * speed,
+    (nx * orbit * spin + ny * drift) * speed,
+  );
+
+  const reach = def.params.blastRadius + TUNE.playerRadius;
+  if (d2 <= reach * reach && enemies.timer[i] <= 0) {
+    enemies.phase[i] = Phase.Windup;
+    enemies.timer[i] = def.params.slamWindup;
+    // `Ring` at the body: the shape's radius is the burst's, which is the exact thing the
+    // player has to leave, drawn for exactly as long as they have to leave it in.
+    pushEvent(w, Ev.Telegraph, i, Tele.Ring, enemies.x[i], enemies.y[i]);
+  }
+}
+
+/**
+ * Broodmother: walk, and put broods of splinters down around itself until it runs out.
+ *
+ * It has no ranged attack and no burst aimed at the player, on purpose: its damage is the
+ * crowd, so the lesson it teaches is the splitter's — kill it away from the pack — spent on
+ * a body that repacks the room every three seconds. Dying in the middle of a ring of its
+ * own children is the trap, and it is the same trap the player already met at wave three,
+ * priced higher. By the fifth brood there is nothing behind it but 220 HP and a slow walk,
+ * which is the right ending for a first boss: the answer never changes, only the company.
+ *
+ * `phase` counts the broods already loosed against the def's `spawnBroods`, because this
+ * behaviour wants a countdown *and* a counter and the pool gives one clock per body. The
+ * children land on a ring clear of the body (`spawnSpread` beyond the two radii), turned by
+ * a stride of the slot so a brood does not drop in the same orientation every time, and at
+ * full health: the cost of the mechanic is that the crowd already being shot gets bigger.
+ */
+function broodRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+
+  if (enemies.timer[i] > 0) {
+    enemies.timer[i] -= DT;
+  } else {
+    enemies.timer[i] = def.params.spawnGap;
+    if (enemies.phase[i] < def.params.spawnBroods) {
+      enemies.phase[i]++;
+      const split = def.splits;
+      const child = split === undefined ? -1 : enemyIndex(split.def);
+      if (child >= 0) {
+        const childDef = ENEMIES[child];
+        const count = def.params.spawnCount;
+        const gap = def.radius + childDef.radius + def.params.spawnSpread;
+        for (let k = 0; k < count; k++) {
+          const a = k * ((Math.PI * 2) / count) + i * GOLDEN_ANGLE;
+          spawnEnemy(w, child, enemies.x[i] + Math.cos(a) * gap, enemies.y[i] + Math.sin(a) * gap);
+        }
+      }
+    }
+  }
+
+  seekDrive(w, i, def);
+}
+
+/**
+ * Matron: hold the shooter's band, fan three bolts across it, and mend the pack.
+ *
+ * Two mechanics on one body, which is what a mid-run boss is for. The band is the shooter's
+ * and wider — it will not work inside six metres, so the ground it stands on has to be
+ * taken from it rather than given — and the pack that arrives beside it gets mended at
+ * seven metres, so standing in the open trading shots with it is the losing side of the
+ * trade. The three answers are the ones the trash taught: break the band, step off the
+ * line, kill the support before the pack stops dying.
+ *
+ * Two clocks, deliberately unaligned: the volley runs on the pool's `timer` and the aura on
+ * the body's own age, so the two mechanics do not land on the same beat and the player
+ * cannot learn one rhythm and ignore the other. The fan is turned about the facing locked at
+ * the flash, three bolts 7.5° apart, which is wide enough that a late step sideways still
+ * walks into an outer bolt's line — and the i-frame gate then collapses what arrives into
+ * one hit rather than three.
+ */
+function matronRunner(w: World, i: number): void {
+  const enemies = w.enemies;
+  const def = ENEMIES[enemies.kind[i]];
+
+  if (onBeat(enemies.age[i], def.params.healGap)) {
+    const found = queryRadius(
+      w.hash,
+      enemies.x,
+      enemies.y,
+      enemies.alive,
+      enemies.x[i],
+      enemies.y[i],
+      def.params.healRange,
+      w.query,
+    );
+    const seen = found < HEAL_SCAN_CAP ? found : HEAL_SCAN_CAP;
+    let mended = false;
+    for (let k = 0; k < seen; k++) {
+      const j = w.query[k];
+      if (j === i || enemies.hp[j] <= 0) continue;
+      const cap = ENEMIES[enemies.kind[j]].hp;
+      if (enemies.hp[j] >= cap) continue;
+      const next = enemies.hp[j] + def.params.healAmount;
+      enemies.hp[j] = next > cap ? cap : next;
+      mended = true;
+    }
+    if (mended) {
+      pushEvent(w, Ev.Heal, i, Math.round(def.params.healRange * 10), enemies.x[i], enemies.y[i]);
+    }
+  }
+
+  if (enemies.phase[i] === Phase.Windup) {
+    enemies.vx[i] = 0;
+    enemies.vy[i] = 0;
+    enemies.timer[i] -= DT;
+    if (enemies.timer[i] <= 0) {
+      const fx = enemies.fx[i];
+      const fy = enemies.fy[i];
+      const start = def.radius + TUNE.shotRadius + 0.1;
+      const ox = enemies.x[i] + fx * start;
+      const oy = enemies.y[i] + fy * start;
+      const count = def.params.bolts;
+      const fan = def.params.fan;
+      // Turned about the locked facing, centre bolt first: the fan's width is what denies
+      // the late dodge, and it costs no extra aim decision because the line was fixed when
+      // the flash started, same bargain as the shooter's single bolt.
+      for (let k = 0; k < count; k++) {
+        const turn = (k - (count - 1) / 2) * fan;
+        const c = Math.cos(turn);
+        const s = Math.sin(turn);
+        launchBolt(
+          w,
+          ox,
+          oy,
+          fx * c - fy * s,
+          fx * s + fy * c,
+          def.params.boltSpeed,
+          def.params.boltDamage,
+          def.params.boltLife,
+        );
+      }
+      enemies.phase[i] = Phase.Seek;
+      enemies.timer[i] = def.params.shotGap;
+    }
+    return;
+  }
+
+  if (enemies.timer[i] > 0) enemies.timer[i] -= DT;
+
+  const player = w.player;
+  const dx = player.x - enemies.x[i];
+  const dy = player.y - enemies.y[i];
+  const d2 = dx * dx + dy * dy;
+  if (d2 <= 1e-12) {
+    drive(w, i, def, 0, 0);
+    return;
+  }
+
+  const d = Math.sqrt(d2);
+  const nx = dx / d;
+  const ny = dy / d;
+
+  let vx = 0;
+  let vy = 0;
+  if (d > def.params.standMax) {
+    vx = nx * def.speed;
+    vy = ny * def.speed;
+  } else if (d < def.params.standMin) {
+    vx = -nx * def.speed;
+    vy = -ny * def.speed;
+  }
+  drive(w, i, def, vx, vy);
+
+  if (d >= def.params.standMin && d <= def.params.standMax && enemies.timer[i] <= 0) {
+    enemies.fx[i] = nx;
+    enemies.fy[i] = ny;
+    enemies.phase[i] = Phase.Windup;
+    enemies.timer[i] = def.params.windup;
+    pushEvent(w, Ev.Telegraph, i, Tele.Line, enemies.x[i], enemies.y[i]);
+  }
+}
+
 /**
  * Steer `vx`/`vy` through the crowd, then move.
  *
@@ -806,15 +1074,39 @@ function face(w: World, i: number, def: EnemyDef, vx: number, vy: number): void 
   }
 }
 
-/** One tick of travel, kept inside the arena so a pack cannot flank through a wall. */
+/**
+ * One tick of travel, kept inside the arena and out of the cover.
+ *
+ * Cover is tested one axis at a time, and that is what turns a wall into a slide: a body
+ * running at a wall face-on loses the axis that hit it and keeps the axis that did not, so it
+ * goes along the wall instead of sticking to it. Nothing is remembered between ticks and no
+ * steering is added, which is the whole reason a thousand bodies can afford the test — and
+ * the reason a body that is properly shut in stops, rather than edging through a corner.
+ *
+ * Both axes are *sweeps* rather than point checks. A dash crosses 0.37 m in one tick and a
+ * charger's dash is faster than that, so a test on the destination alone would let a body
+ * arrive on the far side of anything thinner than its own stride, which is the same failure
+ * the round path guards against for the same reason.
+ */
 function advance(w: World, i: number, def: EnemyDef): void {
   const enemies = w.enemies;
-  // `travel` is this body's fraction, set once per body in `updateEnemies` — see there
-  // for why it is a module slot rather than an argument. At 1 it costs one multiply.
-  enemies.x[i] += enemies.vx[i] * DT * travel;
-  enemies.y[i] += enemies.vy[i] * DT * travel;
-  enemies.x[i] = Math.min(Math.max(enemies.x[i], w.minX + def.radius), w.maxX - def.radius);
-  enemies.y[i] = Math.min(Math.max(enemies.y[i], w.minY + def.radius), w.maxY - def.radius);
+  const r = def.radius;
+  const dx = enemies.vx[i] * DT * travel;
+  const dy = enemies.vy[i] * DT * travel;
+  const x = enemies.x[i];
+  const y = enemies.y[i];
+
+  if (dx !== 0) {
+    if (canTravel(w.props, x, y, dx, 0, r)) enemies.x[i] = x + dx;
+    else enemies.vx[i] = 0;
+  }
+  if (dy !== 0) {
+    if (canTravel(w.props, enemies.x[i], y, 0, dy, r)) enemies.y[i] = y + dy;
+    else enemies.vy[i] = 0;
+  }
+
+  enemies.x[i] = Math.min(Math.max(enemies.x[i], w.minX + r), w.maxX - r);
+  enemies.y[i] = Math.min(Math.max(enemies.y[i], w.minY + r), w.maxY - r);
 }
 
 /**
@@ -918,8 +1210,12 @@ function thornsPulse(w: World, thorns: number): void {
  * Returns false and counts the loss when the stack is full, which at thirty-two waiting
  * bursts means the floor is already on fire and one more would not be the thing that decides
  * the run. Counting it is the point: a burst that vanished silently is a bug nobody sees.
+ *
+ * Exported because the floor fires one too: a crusher plate is the same object to the sim as
+ * a detonation, and paying it out through the same resolver is what makes "read the ring,
+ * leave the ring" one rule in this game rather than two.
  */
-function queueBlast(w: World, x: number, y: number, r: number, dmg: number, depth: number): boolean {
+export function queueBlast(w: World, x: number, y: number, r: number, dmg: number, depth: number): boolean {
   const stack = w.blasts;
   if (stack.count >= stack.cap) {
     stack.dropped++;

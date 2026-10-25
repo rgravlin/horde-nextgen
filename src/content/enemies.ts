@@ -15,6 +15,11 @@ export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
  * Behaviour ids, in the order the `AI` record in systems/enemies.ts lists them.
  * That record is keyed by this union, so an id without a behaviour is a
  * typecheck error instead of an enemy that quietly stands still.
+ *
+ * The last three are the end-of-level encounters. They are behaviours rather than
+ * reskinned bodies because a boss has to ask the player to do something the trash
+ * never did: dodge a volley of charges, kill it away from the crowd it keeps breeding,
+ * or answer two mechanics at once.
  */
 export const AI_IDS = [
   'chaser',
@@ -26,6 +31,9 @@ export const AI_IDS = [
   'shooter',
   'grenadier',
   'healer',
+  'brute',
+  'brooder',
+  'matron',
 ] as const;
 
 export type AiId = (typeof AI_IDS)[number];
@@ -63,6 +71,15 @@ export interface EnemyDef {
   readonly params: Readonly<Record<string, number>>;
   /** Death split, for the bodies that come apart into smaller ones. */
   readonly splits?: SplitDef;
+  /**
+   * An end-of-level encounter rather than horde fodder.
+   *
+   * Two things read it: a boss never staggers (a shove that moved a 500 HP body would
+   * be a better answer to it than any of its telegraphs, and a boss that got pushed
+   * round the room by a shotgun teaches nothing), and the HUD draws a name plate and a
+   * health bar for whichever body the chapter's script ends with.
+   */
+  readonly boss?: boolean;
   /** Emissive core colour. Bodies stay dark matte (DESIGN.md 'Palette'). */
   readonly accent: string;
 }
@@ -377,6 +394,136 @@ export const ENEMIES: readonly EnemyDef[] = [
       fleeRadius: 8,
     },
     accent: '#3DFF8A',
+  },
+
+  // ── End-of-level encounters ───────────────────────────────────────────────────────
+  // Three bodies a chapter ends on rather than opens with, so the first thing a player
+  // has to work out at a boss is not "what is this" but "what does it want from me
+  // that the last hundred bodies did not". Each one is answered by a skill the trash
+  // already taught, turned up: kill it away from the crowd, step out of a ring, or
+  // prioritise two things at once.
+  //
+  // Their collision radii stay near 1.5 m on purpose. The hit queries pad for the widest
+  // body in the table (see HIT_PAD in systems/projectiles.ts), so a 3 m body makes every
+  // shot in the game query a wider circle, and a boss that slowed down every weapon
+  // to pay for its size would be a bad trade.
+
+  {
+    id: 'broodmother',
+    faction: 'reactor',
+    // The chapter-1 finisher: slow, and it does not hit you at all. Its damage is the
+    // brood it keeps putting down — five broods of three splinters, then it runs out and
+    // is just a fat body to shoot — so the answer is the same one the splitter taught,
+    // spent on a body that teaches it again: kill it away from the crowd, and do it
+    // before the brood arrives. Dying in a ring of its own children is the trap.
+    hp: 220,
+    speed: 2.4,
+    radius: 1.5,
+    armor: 2,
+    xp: 25,
+    ai: 'brooder',
+    boss: true,
+    // spawnGap: seconds between broods. spawnBroods: how many it looses before it stops.
+    // spawnCount: splinters per brood. spawnSpread: how far outside its own body they
+    // land. blastRadius/blastDamage: what it leaves behind, which is the second half of
+    // the same lesson.
+    params: {
+      sepRadius: 2.6,
+      sepPush: 2.8,
+      touchRange: 0.3,
+      touchDamage: 10,
+      faceLag: 6,
+      spawnGap: 3.2,
+      spawnBroods: 5,
+      spawnCount: 3,
+      spawnSpread: 1.4,
+      blastRadius: 3.6,
+      blastDamage: 30,
+    },
+    splits: { def: 'splinter', count: 4 },
+    accent: '#9B5CFF',
+  },
+  {
+    id: 'matron',
+    faction: 'cult',
+    // Two mechanics at once, which is the whole point of a mid-run boss: it holds the
+    // shooter's band and mends the pack that arrives with it, so the player has to
+    // answer the fan AND kill the support before the pack stops dying. The fan is three
+    // bolts 7.5° apart, wide enough that a step taken *after* the flash still crosses
+    // another bolt's line: the fan covers the corridor you would flee down. What lands is
+    // one hit rather than three, because the i-frame gate collapses a volley that arrives
+    // together — the width is there to deny the dodge, not to stack the damage.
+    hp: 300,
+    speed: 3.1,
+    radius: 1.25,
+    armor: 3,
+    xp: 30,
+    ai: 'matron',
+    boss: true,
+    // standMin/standMax: the band it works at, wider than the shooter's so it cannot be
+    // walked down. fan: radians between bolts. healRange/healGap/healAmount: the same
+    // aura the healer runs, at over twice the reach and half again the price.
+    params: {
+      sepRadius: 2.2,
+      sepPush: 2.2,
+      touchRange: 0.3,
+      touchDamage: 8,
+      faceLag: 8,
+      standMin: 6,
+      standMax: 11,
+      windup: 0.45,
+      shotGap: 1.8,
+      bolts: 3,
+      fan: 0.13,
+      boltSpeed: 15,
+      boltDamage: 9,
+      boltLife: 1.6,
+      healRange: 7,
+      healGap: 3,
+      healAmount: 14,
+    },
+    accent: '#3DFF8A',
+  },
+  {
+    id: 'atlas',
+    faction: 'foundry',
+    // The last answer for a run that has learned everything: it takes the armored's
+    // plate and its circling, and adds a slam. It presses to a 5.5 m ring and walks it
+    // fast, so its shield is always sideways and always moving; every two and a half
+    // seconds it stops, flashes for 450 ms, and drops a 4.6 m burst centred on itself.
+    // Both halves are the same lesson: the way through a wall is round it. Standing in
+    // front of it is answered by the plate, and standing inside the ring is answered by
+    // the slam.
+    hp: 520,
+    // Faster than its cruise while it orbits (the ring's sideways drift adds to it),
+    // which is why the flank has to be *walked* rather than reached by one step.
+    speed: 3.4,
+    radius: 1.5,
+    armor: 12,
+    xp: 40,
+    ai: 'brute',
+    boss: true,
+    // standoff: the ring it holds. orbit: fraction of its speed spent sideways.
+    // slamGap: seconds between slams, slamWindup: the flash before one lands.
+    // blastRadius/blastDamage: the slam, which hurts its own pack as much as the player.
+    // armorArc/armorSide: the plate, wider and thinner than the armored's — 0.25 of it
+    // stays on the flank, so flanking is worth doing and is not free.
+    params: {
+      sepRadius: 2.6,
+      sepPush: 2.6,
+      touchRange: 0.35,
+      touchDamage: 16,
+      faceLag: 3,
+      standoff: 5.5,
+      orbit: 0.9,
+      slamGap: 2.5,
+      slamWindup: 0.45,
+      blastRadius: 4.6,
+      blastDamage: 24,
+      armorArc: 0.55,
+      armorSide: 0.25,
+    },
+    accent: '#F2B233',
   },
 ];
 

@@ -163,6 +163,23 @@ export function hashWorld(world: World): number {
   // Where the wave's pack recipe has got to. It decides what the next batch is, so two
   // runs that disagree here are spawning different enemies from here on.
   h = fnv32Word(h, world.wave.cursor);
+  // The chapter's own arc, and the hazard clocks. Both are places a divergence starts
+  // rather than ends — a crusher that fires a tick late has already moved its victims by
+  // the time you can see it — but the rule here is that anything a run can tell the
+  // difference by is in the fingerprint, so a replay that drifted is caught at whatever
+  // tick it drifted rather than at whichever tick the positions finally disagreed.
+  h = fnv32Byte(h, world.wave.phase);
+  h = mixScalar(h, world.wave.clearTime);
+  const z = world.zones;
+  h = fnv32Byte(h, z.n);
+  for (let i = 0; i < z.n; i++) {
+    h = fnv32Byte(h, z.kind[i]);
+    h = mixScalar(h, z.t[i]);
+    h = fnv32Byte(h, z.armed[i]);
+  }
+  // The cover is not folded in: it is fixed for the chapter, `chapter` above already
+  // names which one, and rehashing sixty boxes every call would cost a scan to repeat a
+  // fact the fingerprint already carries.
   // `blasts` is deliberately not covered: the stack is drained every tick, so between
   // ticks it is always empty and hashing it would cost four scans for one constant.
 

@@ -32,7 +32,7 @@ import { createRng, next } from '../sim/rng';
 import { step } from '../sim/step';
 import { spawnEnemy } from '../sim/systems/enemies';
 import { awardXp, choosePick, reroll } from '../sim/systems/pickups';
-import { startWaves } from '../sim/systems/waves';
+import { bossesAlive, startChapter } from '../sim/systems/levels';
 import { createWorld, loadSlot, type World } from '../sim/world';
 import { createClock, createFrameReport, runFrame } from './loop';
 import type { Hud, HudCommand, HudView } from '../ui/hud';
@@ -173,11 +173,19 @@ export function createApp(ports: AppPorts): App {
     step(world, frame);
   };
 
-  /** Throw the run away and start a fresh one on the same seed. */
+  /**
+   * Throw the run away and start a fresh one on the same seed.
+   *
+   * `startChapter` rather than `startWaves`: the chapter is what puts a floor under the
+   * player, and the shell is the only door that does it (a fresh `World` is empty on
+   * purpose). Starting only the wave clock gave a run a horde and no room — no cover,
+   * no hazards, and a chapter counter stuck on 0 — which is exactly the flat endless
+   * arena the design brief rules out.
+   */
   function restart(): void {
     world = createWorld(ports.seed);
     world.autoFire = ports.autoFire ?? true;
-    startWaves(world, 1);
+    startChapter(world, 0);
     scene = 'playing';
   }
 
@@ -318,7 +326,9 @@ export function createApp(ports: AppPorts): App {
         dashReady: p.dashCd <= 0,
         alive: p.alive,
       },
-      wave: { index: w.wave.index, timeLeft: w.wave.timeLeft, bossAlive: false },
+      // The same read the chapter machine waits on, so the number a scenario asserts on
+      // and the number that ends the chapter cannot drift apart.
+      wave: { index: w.wave.index, timeLeft: w.wave.timeLeft, bossAlive: bossesAlive(w) },
       score: w.score,
       kills: w.kills,
       enemies: { count: enemies.count, byType, nearest },

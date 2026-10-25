@@ -28,6 +28,7 @@
 
 import { ENEMIES } from '../../content/enemies';
 import { WEAPONS, type WeaponDef } from '../../content/weapons';
+import { blocked, canTravel } from './obstacles';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, TUNE, pushEvent, release, type World } from '../world';
 import { armorAgainst, killEnemy } from './enemies';
@@ -136,7 +137,11 @@ function damage(
     return;
   }
 
-  if (def.knockback > 0) {
+  // A boss never rides a shove. Knockback is a positioning tool against the horde — three
+  // ticks of not-steering is what spoils a charger's line — but the same number applied to
+  // a 520 HP body makes the answer to every boss "hit it and walk it into a wall", which
+  // is a better answer than any of its telegraphs and teaches nothing the fight was for.
+  if (def.knockback > 0 && !ENEMIES[enemies.kind[j]].boss) {
     enemies.vx[j] = dirx * def.knockback;
     enemies.vy[j] = diry * def.knockback;
     enemies.state[j] = STAGGER_TICKS;
@@ -181,8 +186,18 @@ function march(
   const reach = PROBE_STEP * 0.5 + HIT_PAD + 0.5;
   const base = def.dmg * w.stats.dmg;
   let budget = def.pierce + 1;
+  // How far downrange the ray has already been cleared, so each window is tested against
+  // the cover between it and the last one rather than against its own length only.
+  let cleared = 0;
 
   for (let travelled = PROBE_STEP * 0.5; travelled < def.range && budget > 0; travelled += PROBE_STEP) {
+    // The ray stops at the first wall it crosses. A sniper's sight line and a sniper's
+    // shot have to agree or the cover in the layouts is scenery, and a hit two rooms
+    // away is not a shot the player could have read.
+    if (blocked(w.props, ox + dirx * cleared, oy + diry * cleared, ox + dirx * travelled, oy + diry * travelled, TUNE.shotRadius))
+      break;
+    cleared = travelled;
+
     const win = Math.floor(travelled / PROBE_STEP);
     const found = queryRadius(
       w.hash,
@@ -477,6 +492,14 @@ function drag(w: World, def: WeaponDef, x: number, y: number): void {
     // Same arena clamp the enemy pass uses, so a vacuum cannot fling a body through a
     // wall — the orb's radius reaches 3.2 m and the arena edge is only 0.4 m away.
     const radius = ENEMIES[enemies.kind[j]].radius;
+    // And the same cover test, which the clamp above cannot stand in for: this is the one
+    // body write in the sim that displaces by position rather than by velocity, so it is
+    // the only way a body gets *inside* cover during play. A pull that would land a body
+    // in a wall is skipped rather than partly applied, since a part of it still ends with
+    // the body sealed in the wall, unable to steer or be shot.
+    if (!canTravel(w.props, enemies.x[j], enemies.y[j], nx - enemies.x[j], ny - enemies.y[j], radius)) {
+      continue;
+    }
     enemies.x[j] = Math.min(Math.max(nx, w.minX + radius), w.maxX - radius);
     enemies.y[j] = Math.min(Math.max(ny, w.minY + radius), w.maxY - radius);
   }
@@ -534,6 +557,19 @@ export function updateProjectiles(w: World): void {
     const fresh = shots.age[i] === 0;
     shots.age[i] += DT;
     shots.life[i] -= DT;
+
+    // Cover retires a round. The test is the swept segment at the round's own radius, so
+    // a railgun's 3.3 m step cannot cross a 1.2 m wall in one tick, and it is the same
+    // helper a body's travel uses, which is what makes "that crate stops both sides" one
+    // fact in this game rather than two that have to be kept in step. A round that began
+    // the tick already inside cover — a muzzle pressed against a crate — is let fly: a
+    // gun that went silent against the cover the player is supposed to hide behind is a
+    // worse bug than a shot that grazes its way out.
+    if (!canTravel(w.props, x0, y0, x1 - x0, y1 - y0, TUNE.shotRadius)) {
+      if (def.fire === 'arc' || def.fire === 'orb') burst(w, def, shots.kind[i], x0, y0, dirx, diry);
+      release(shots, i);
+      continue;
+    }
 
     if (def.fire === 'arc' || def.fire === 'orb') {
       if (shots.life[i] <= 0) {

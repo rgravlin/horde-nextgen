@@ -29,14 +29,21 @@ import {
   Plane,
   PlaneGeometry,
   Raycaster,
+  RenderPipeline,
   Scene,
   Vector2,
   Vector3,
   WebGPURenderer,
 } from 'three/webgpu';
+import { pass, uniform } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { chromaticAberration } from 'three/addons/tsl/display/ChromaticAberrationNode.js';
 
+import { levelAt } from '../content/levels';
 import type { World } from '../sim/world';
+import { createFxView, type FxView } from './fxView';
 import { createBatches, flipToRender, type Batches } from './instancing';
+import { createSceneryView, type SceneryView } from './scenery';
 
 /** What `__forgeState().backend` reports; 'none' means neither backend came up. */
 export type Backend = 'webgpu' | 'webgl2' | 'none';
@@ -69,6 +76,12 @@ interface BackendLike {
 export interface View {
   readonly backend: Backend;
   readonly quality: Quality;
+  /**
+   * Frames whose GPU work threw, counted rather than swallowed (AGENTS.md), and added
+   * to `__forgeState().errors` by the shell. A renderer that cannot draw keeps playing:
+   * the count is how a scenario tells "quiet" from "silent because it broke".
+   */
+  readonly errors: number;
   /**
    * Draw one frame. `alpha` is the interpolation point inside the last fixed step
    * and `dt` the real seconds since the previous frame, used only for camera
@@ -113,6 +126,25 @@ const _hit = new Vector3();
 const _focus = new Vector3();
 const _ground = new Plane(new Vector3(0, 1, 0), 0);
 const _ray = new Raycaster();
+
+/**
+ * Paint one chapter's air: its fog, its sky and the colour of its one key light.
+ *
+ * DESIGN.md asks each chapter to tint the fog and key light while the palette *roles* never
+ * change, so this moves three colours and nothing else — no geometry, no material, no light
+ * added or removed. The sky takes the fog's value rather than keeping Void because the brief's
+ * own reason for a Void fog is that the two never fight; splitting them at a chapter boundary
+ * would put a hard seam where the arena's edge already is.
+ *
+ * Driven off `world.chapter` rather than off the scene rebuild because a run changes rooms
+ * without changing scenes: one scene, ten rooms, and the chapter says which.
+ */
+function applyTint(scene: Scene, key: DirectionalLight, chapter: number): void {
+  const palette = levelAt(chapter).palette;
+  if (scene.fog instanceof FogExp2) scene.fog.color.set(palette.fog);
+  if (scene.background instanceof Color) scene.background.set(palette.fog);
+  key.color.set(palette.key);
+}
 
 export interface ViewOptions {
   /** `?gl=webgl2` in the URL, or the settings toggle. */
@@ -256,10 +288,86 @@ export async function createView(
   scene.add(playerRig);
 
   /**
-   * Camera and batch state, one set per view: which pools the layers were built
+   * The post chain: bloom, then the chromatic punch, then tone mapping, in one
+   * composite pass rather than a stack of full-screen passes.
+   *
+   * `outputColorTransform` stays at its default, which makes the pipeline wrap the
+   * chain in its own output node: the bloom reads the scene's HDR values, the aberration
+   * offsets them, and tone mapping and the sRGB step land after both — the order the
+   * design brief asks for and the order that keeps big hits glowing instead of clipping.
+   *
+   * Built inside a `try` because this is the one part of the frame that can fail for
+   * reasons nobody here can test: a driver without the float-blend extension, a WebGL2
+   * context that came up without what the bloom mips want. A chain that will not build
+   * leaves `pipeline` null and the frame goes through the plain path in `draw`, so the
+   * player loses the grade and keeps the game.
+   */
+  let pipeline: RenderPipeline | null = null;
+  let errorCount = 0;
+  if (quality !== 'low') {
+    try {
+      const scenePass = pass(scene, camera);
+      const bloomPass = bloom(scenePass.getTextureNode(), quality === 'high' ? 0.62 : 0.4, 0.6, 0.72);
+      // Strength goes in as a uniform rather than a literal: the punch DESIGN.md asks for on
+      // a big hit has to be able to change it mid-run, and that is how the node is meant to
+      // be driven (`chromaticAberration(node, strength, center, scale)`).
+      const chroma = uniform(quality === 'high' ? 0.004 : 0.0025);
+      pipeline = new RenderPipeline(renderer, chromaticAberration(bloomPass, chroma));
+    } catch (error) {
+      pipeline = null;
+      errorCount++;
+      console.error('post chain unavailable:', error);
+    }
+  }
+
+  /**
+   * Everything drawn out of the World's pools, one set per World.
+   *
+   * A restart builds a new World with new pools, so the layers are rebuilt against it —
+   * and the old set is taken out of the scene and disposed rather than left under the new
+   * one, because a run restarted twenty times should not pay for twenty arenas.
+   */
+  interface Kit {
+    batches: Batches;
+    fx: FxView;
+    scenery: SceneryView;
+    group: Group;
+  }
+  let kit: Kit | null = null;
+  /** False once even a plain render has thrown: the sim runs, nothing is drawn. */
+  let drawing = true;
+  /** Which chapter's tint the scene is currently wearing; -1 until the first draw. */
+  let tintChapter = -1;
+
+  function buildKit(world: World): Kit {
+    if (kit !== null) {
+      scene.remove(kit.group);
+      kit.group.traverse((o) => {
+        const holder = o as unknown as {
+          geometry?: { dispose(): void };
+          material?: { dispose(): void } | Array<{ dispose(): void }>;
+        };
+        holder.geometry?.dispose();
+        const material = holder.material;
+        if (Array.isArray(material)) for (const one of material) one.dispose();
+        else material?.dispose();
+      });
+    }
+
+    const group = new Group();
+    scene.add(group);
+    return {
+      batches: createBatches(group, world),
+      fx: createFxView(group, quality),
+      scenery: createSceneryView(group, world, quality),
+      group,
+    };
+  }
+
+  /**
+   * Camera and layer state, one set per view: which pools the layers were built
    * against, the point the follow chases and how far the title orbit has travelled.
    */
-  let batches: Batches | null = null;
   let following = false;
   let orbitAngle = 0;
 
@@ -267,13 +375,29 @@ export async function createView(
     backend,
     quality,
 
+    get errors() {
+      return errorCount;
+    },
+
     draw(world, alpha, dt, orbit) {
+      if (!drawing) return;
+
       // Built once against the pools of the World first drawn; a restart builds a
       // new World, so the layers have to be rebuilt against its pools.
-      if (batches === null || batches.layers[0].pool !== world.enemies) {
-        batches = createBatches(scene, world);
+      if (kit === null || kit.batches.layers[0].pool !== world.enemies) {
+        kit = buildKit(world);
       }
-      batches.sync(alpha);
+
+      // The room's air follows the chapter, and only when the chapter changes: three colour
+      // writes at a chapter boundary rather than three every frame.
+      if (world.chapter !== tintChapter) {
+        tintChapter = world.chapter;
+        applyTint(scene, key, world.chapter);
+      }
+
+      kit.batches.sync(alpha);
+      kit.scenery.sync(world);
+      kit.fx.sync(world);
 
       const p = world.player;
       playerRig.position.set(p.x, 0, flipToRender(p.y));
@@ -314,7 +438,28 @@ export async function createView(
       // `aim()` reads the camera's matrices, which `render` would only refresh
       // later; updating here keeps the pointer's ground point current for the tick.
       camera.updateMatrixWorld();
-      renderer.render(scene, camera);
+
+      // One guard for the frame, with a same-frame demotion rather than a dropped one:
+      // a chain that throws loses the chain and the frame is drawn plain, and a plain
+      // render that throws stops the drawing. Either way the error is counted and the
+      // simulation keeps stepping, so a bad GPU day costs picture, not the run.
+      try {
+        if (pipeline !== null) pipeline.render();
+        else renderer.render(scene, camera);
+      } catch (error) {
+        errorCount++;
+        if (errorCount === 1 || errorCount % 300 === 0) console.error('render failed:', error);
+        if (pipeline !== null) {
+          pipeline = null;
+          try {
+            renderer.render(scene, camera);
+          } catch {
+            drawing = false;
+          }
+        } else {
+          drawing = false;
+        }
+      }
     },
 
     aim(clientX, clientY, out) {

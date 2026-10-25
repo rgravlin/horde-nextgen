@@ -7,8 +7,8 @@
  *
  * - `Bolt` — the shooter's round. It is tested against the player's disc as the
  *   segment it swept this tick, the same tunnel-proof the weapon rounds use, and
- *   it dies on the player or when its life runs out. An invulnerable player is
- *   simply not there for the test: a bolt that crosses the disc inside the
+ *   it dies on the player, at cover, or when its life runs out. An invulnerable
+ *   player is simply not there for the test: a bolt that crosses the disc inside the
  *   i-frame window passes through, because damage that arrives in an invulnerable
  *   window is damage that does not exist.
  * - `Grenade` — the grenadier's lob. It resolves nothing while it flies and
@@ -28,6 +28,7 @@
  */
 
 import { DT, Ev, TUNE, alloc, pushEvent, release, type World } from '../world';
+import { canTravel } from './obstacles';
 import { absorbIncoming } from './powerups';
 
 /** The two delivery shapes, in the `enemyShots` pool's `kind` slot. */
@@ -180,6 +181,16 @@ export function updateEnemyProjectiles(w: World): void {
     const y1 = y0 + vy * DT;
     const dirx = vx / speed;
     const diry = vy / speed;
+
+    // Cover retires an enemy round exactly as it retires the player's: one swept segment at
+    // the round's own radius, and a round that began the tick inside cover is let fly, so a
+    // shooter stood on a catwalk is not disarmed by the wall beside it. Without this a bolt
+    // and a lob both fly through the room's furniture, and cover stops being a thing either
+    // side can use — which is the whole reason the layouts have any.
+    if (!canTravel(w.props, x0, y0, x1 - x0, y1 - y0, TUNE.shotRadius)) {
+      release(shots, i);
+      continue;
+    }
 
     if (shots.kind[i] === ShotKind.Grenade) {
       // Fly until the flight is spent, then burst where the arc got to — and the last

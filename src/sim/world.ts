@@ -11,6 +11,8 @@
 
 import { baseStats, POWERUPS, type StatBlock } from '../content/powerups';
 import { WEAPONS } from '../content/weapons';
+import { createEffects, type EffectField } from './fx';
+import { createPropField, createZoneField, type PropField, type ZoneField } from './systems/obstacles';
 import { createRng, type Rng } from './rng';
 import { createSpatialHash, type SpatialHash } from './spatialHash';
 
@@ -34,6 +36,15 @@ export const POOL_CAPS = {
    * choice. 24 is already more than a run can route to.
    */
   chests: 24,
+  /**
+   * Boxes of static cover a chapter may lay down, and floor hazards it may pour. Neither
+   * is a TECH.md pool: both are built once when a chapter is installed rather than
+   * allocated through a run, and the caps bound what a layout may author, not what a
+   * fight can produce. 64 boxes is roughly a hundred metres of wall or forty crates,
+   * which is more floor than a 120x120 m arena can hold interestingly.
+   */
+  props: 64,
+  zones: 16,
 } as const;
 
 /** Tuning defaults the sim reads. Content files may override per item later. */
@@ -256,7 +267,14 @@ export interface Pool {
   readonly elite: Uint8Array;
 }
 
-/** Circular event buffer, oldest first, dropping the oldest on overflow. */
+/**
+ * Circular event buffer, oldest first, dropping the oldest on overflow.
+ *
+ * It is a broadcast, not a queue: nothing in the sim is required to drain it, which is
+ * why a consumer (the particle field in `fx.ts`, later audio) keeps its own cursor into
+ * `written` rather than consuming `count`. A drain would make the first reader silence
+ * the rest, and the first reader is whichever feature got written first.
+ */
 export interface EventRing {
   readonly cap: number;
   readonly type: Int32Array;
@@ -270,6 +288,12 @@ export interface EventRing {
   count: number;
   /** Events dropped for lack of room; keeps the loss observable. */
   dropped: number;
+  /**
+   * How many events have ever been pushed, which is what makes a cursor possible: the
+   * unread window is `[written - count, written)` and a slot is `written % cap`. Only
+   * `clearEvents` resets it, and only because that call means "nobody wants the past".
+   */
+  written: number;
 }
 
 /**
@@ -384,6 +408,15 @@ export interface WaveState {
    * chapter's composition be read off the recipe instead of drawn from luck.
    */
   cursor: number;
+  /**
+   * Where the chapter is in its own arc, which is not the same question as which wave
+   * it is on. See `Phase` in `systems/levels.ts`: the drumbeat runs during the script,
+   * stops when the chapter's encounter walks in, and the chapter is over when the
+   * encounter is.
+   */
+  phase: number;
+  /** Seconds of intermission left before the next chapter loads. */
+  clearTime: number;
 }
 
 export interface World {
@@ -451,10 +484,23 @@ export interface World {
   chests: Pool;
   /** Death blasts queued this tick, paid out by `resolveBlasts` (see systems/enemies). */
   blasts: BlastStack;
+  /**
+   * Static cover, installed per chapter. Empty in a world that never started one, which
+   * is why every query against it starts with a length check (see `props.ts`).
+   */
+  props: PropField;
+  /** Floor hazards, installed per chapter alongside the cover. */
+  zones: ZoneField;
   hash: SpatialHash;
   events: EventRing;
   /** Scratch for hash queries; only valid during the tick that filled it. */
   readonly query: Int32Array;
+  /**
+   * Particles and point lights, derived from the event ring after the damage passes
+   * (see `fx.ts`). Presentation only: no rule reads it, which is what lets the bench
+   * load 8,000 of them without changing a single outcome.
+   */
+  fx: EffectField;
 }
 
 export interface WorldOptions {
@@ -661,6 +707,8 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
       timeLeft: TUNE.waveLength,
       timer: TUNE.firstBatchDelay,
       cursor: 0,
+      phase: 0,
+      clearTime: 0,
     },
     enemies: createPool('enemies', enemyCap),
     shots: createPool('shots', opts.projectiles ?? POOL_CAPS.projectiles),
@@ -668,6 +716,8 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     shards: createPool('shards', opts.shards ?? POOL_CAPS.shards),
     chests: createPool('chests', opts.chests ?? POOL_CAPS.chests),
     blasts: createBlastStack(opts.blasts ?? POOL_CAPS.blasts),
+    props: createPropField(POOL_CAPS.props, cell, minX, minY, maxX, maxY),
+    zones: createZoneField(POOL_CAPS.zones),
     hash: createSpatialHash(minX, minY, maxX, maxY, cell, enemyCap),
     events: {
       cap: eventCap,
@@ -679,9 +729,31 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
       head: 0,
       count: 0,
       dropped: 0,
+      written: 0,
     },
     query: new Int32Array(opts.queryCap ?? 256),
+    fx: createEffects(),
   };
+}
+
+/**
+ * Fit the playable box to a chapter, so a canal and a ring arena are not fought in a room
+ * the size of the first one.
+ *
+ * Clamped inside the box the World was built with rather than trusted: the spatial hash and
+ * the prop grid were both sized from `createWorld`'s arena, so a chapter that asked for a
+ * bigger room than the World has would be indexing bodies outside the grid that holds them,
+ * which is not a bigger arena but collisions quietly switching off. A chapter that wants
+ * 200x200 m gets the floor there is, at the size the floor has.
+ */
+export function setArena(w: World, half: number): void {
+  const built = Math.min(w.hash.cols * w.hash.cellSize, w.hash.rows * w.hash.cellSize) * 0.5;
+  const edge = half > built ? built : half;
+  const inner = edge > TUNE.playerRadius ? edge : TUNE.playerRadius;
+  w.minX = -inner;
+  w.minY = -inner;
+  w.maxX = inner;
+  w.maxY = inner;
 }
 
 /**
@@ -703,6 +775,17 @@ export function pushEvent(w: World, type: number, a: number, b: number, x: numbe
   e.y[i] = y;
   e.head = (i + 1) % e.cap;
   e.count++;
+  e.written++;
+}
+
+/**
+ * The slot a cursor points at, for a consumer that tracks `written` rather than
+ * `count` (see `EventRing`). Returns -1 for a position already overwritten.
+ */
+export function eventAt(w: World, at: number): number {
+  const e = w.events;
+  if (at < 0 || at >= e.written || at < e.written - e.count) return -1;
+  return at % e.cap;
 }
 
 /** Slot index of the k-th unread event, 0 = oldest; -1 when k is out of range. */
@@ -732,9 +815,17 @@ export function countEvents(w: World, type: number): number {
   return n;
 }
 
-/** Drop every unread event; the consumers call this once per rendered frame. */
+/**
+ * Drop every unread event; the consumers call this once per rendered frame.
+ *
+ * `written` goes back to zero with them, so a consumer that tracks a cursor starts from
+ * the same reset point rather than reading a window that no longer exists. What a
+ * consumer loses by this call is the events that arrived since its last look, which is
+ * why the particle field keeps a cursor instead of calling this: the ring is a broadcast.
+ */
 export function clearEvents(w: World): void {
   const e = w.events;
   e.head = 0;
   e.count = 0;
+  e.written = 0;
 }
