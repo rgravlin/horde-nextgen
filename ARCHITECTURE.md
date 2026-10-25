@@ -31,7 +31,7 @@ outside `src/sim` may decide gameplay outcomes.
 | `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
 | `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
 | `src/input/` | `sampler.ts` (keyboard + mouse → `InputFrame`), `gamepad.ts`, `bindings.ts` (default map, remappable) | `sim` types only |
-| `src/game/` | `app.ts` (scene state machine), `loop.ts` (fixed-step accumulator), `persistence.ts` (the three storage slots: run, settings, meta; plus the autosave clock), `debugState.ts` (`__forgeState`) | `sim`, `content`, `input`, and the render/audio/ui modules |
+| `src/game/` | `app.ts` (scene state machine, and the save timing hung off it: `archiveRun`, the `save`/`load` commands, Continue), `loop.ts` (fixed-step accumulator), `persistence.ts` (the three storage slots: run, settings, meta; plus the autosave clock), `debugState.ts` (`__forgeState`) | `sim`, `content`, `input`, and the render/audio/ui modules |
 | `src/main.ts` | composition root: build the `World`, the renderer, audio, UI and input, register `window.__forgeState` / `window.__forgeDebug` | everything |
 
 Hard rules, checked in CI:
@@ -97,11 +97,11 @@ Only `playing` advances the sim; every other state freezes it (DESIGN.md's "game
 
 | State | Sim | Input means | Overlay |
 |---|---|---|---|
-| menu | no | menu nav; camera orbits a demo arena | title stack |
+| menu | no | menu nav; camera orbits a demo arena; **Continue** appears while a save is in storage | title stack |
 | levelselect | no | pick unlocked chapter (grid of 10) | chapter grid |
 | playing | 60 Hz | gameplay map (move/aim/fire/dash/swap/pause) | HUD |
 | levelup | no | 1/2/3 or click picks a card, R rerolls | 3 cards + reroll |
-| paused | no | Esc/P resumes; quit-to-menu saves first | pause panel |
+| paused | no | Esc/P resumes; **Save run** and **Load saved run** on the panel | pause panel |
 | summary | no | restart level / restart run / menu | death stats |
 | victory | no | menu / arena | victory sweep |
 | settings | no | tabs Audio/Video/Controls/Gameplay | settings panel |
@@ -115,9 +115,9 @@ they came from and return there. `settings`/`history` are reachable from both `m
 
 | Key | Contents | Written |
 |---|---|---|
-| `neonhorde.save.v1` | resumable run snapshot: `seed`, `chapter`, `tick`, wave progress, player, weapon slots, powerups, score, kills — plus the five pools and the floor, byte for byte | autosave every 30 s, on pause, at each chapter end |
-| `neonhorde.settings.v1` | master/sfx/music volume, quality tier (`auto`/low/med/high), resolution scale, auto-fire, shake amount | on change |
-| `neonhorde.meta.v1` | unlocked chapters, best *time* per chapter (`-1` = never cleared), run-history rows for the history screen (last 50: date, chapter, time, kills, score, weapon ids) | when a run ends |
+| `neonhorde.save.v1` | resumable run snapshot: `seed`, `chapter`, `tick`, wave progress, player, weapon slots, powerups, score, kills — plus the five pools and the floor, byte for byte | every 30 s of play, at each chapter end, and on the pause panel's Save run. Cleared when a run ends (dead or won): a slot only ever holds a run worth resuming |
+| `neonhorde.settings.v1` | master/sfx/music volume, quality tier (`auto`/low/med/high), resolution scale, auto-fire, shake amount | on change (nothing writes it until the settings screen exists) |
+| `neonhorde.meta.v1` | unlocked chapters, best *time* per chapter (`-1` = never cleared), run-history rows for the history screen (last 50: date, chapter, time, kills, score, weapon ids) | at a chapter's end, and when a run ends |
 
 `serialize(world)` in `src/sim/serialize.ts` only produces and consumes the snapshot object; the localStorage read
 and write happen in `src/game/persistence.ts` through the `StorageLike` port (`{getItem, setItem, removeItem}`, so a
@@ -127,7 +127,7 @@ never silent. Absence is not a problem: no key, or an empty one, is a first laun
 Key remapping is deliberately not in the settings payload yet; the bind map belongs to `src/input/bindings.ts` when
 remapping lands, so that there is one table and the sampler reads it.
 
-Three points below are load-bearing rather than incidental, so they are recorded here rather than only in the code:
+The points below are load-bearing rather than incidental, so they are recorded here rather than only in the code:
 
 - **Pools travel as bytes, not as JSON numbers.** `hashWorld` folds whole typed arrays, and `alloc` clears a slot
   on the way *in*, so a dead slot still carries the body that died in it and the free stack's order decides where
@@ -144,6 +144,13 @@ Three points below are load-bearing rather than incidental, so they are recorded
   interval still — a wall-clock timer would spend a long pause writing saves and call that autosave. It reports due
   every 30 s and at a chapter's end, keyed by *which* chapter ended, because the intermission is 4 s and the
   interval is 30: a chapter can end inside the gap its predecessor opened.
+- **The shell owns the shelf, not the keys.** `archiveRun()` in `app.ts` runs once per frame outside the step loop
+  and is the only thing that writes: a frozen scene writes nothing, so the interval is measured in play and the
+  pause screen's Save is a request rather than a second clock. `save`, `load` and the title's Continue arrive as
+  `HudCommand`s and go through `App.command`, exactly like `start` and `restart` — no key or click handler touches
+  the `World` — and a load swaps whole `World`s (`enterWorld`), because a save is a state, not a patch. Both
+  buttons ask `hasSave()` before they appear, and a load from storage is checked before it is played: an empty or
+  corrupt slot leaves the title on the title and costs one `errors`.
 
 ## State for checks
 
@@ -157,11 +164,11 @@ No URL parameter or key jumps to a state purely so it can be photographed; scena
 
 | Path | Kind | Covers |
 |---|---|---|
-| `tests/unit/*.test.ts` | vitest, `environment: "node"`, no DOM | rng + spatial hash; every weapon kind (spread, pierce, falloff, reload, heat, chain, DoT); every AI behaviour (the melee five in `enemies-a.test.ts` — charger telegraphs before dashing, splitter spawns children, exploder AoE — and the ranged trio in `enemies-b.test.ts`: shooter band and 24-tick flash, grenade burst at its telegraphed ring, healer pulse, plus the enemy-round pool's i-frame gate); XP/level-up, powerup tiers capped at 5, dash i-frames; the chapter arc and its cover (`obstacles.test.ts`); the wave script (`waves.test.ts`: a scripted pack lands at its second and at no second before, nothing comes down inside cover or inside the 32×18 m view rect over all ten layouts, and the chapter's `hp` scale reaches the bodies); save/load round-trip; same seed + inputs → same `hashWorld`; the storage layer against a `Map` fake and a fake that throws (`persistence.test.ts`: the three keys, corrupt and partial payloads, the 50-row history cap, chapter unlocks, the autosave interval measured in play seconds); `purity.test.ts` for the import rule |
-| `tests/e2e/*.spec.ts` | Playwright 1.48.2, Chromium from `/ms-playwright`, flags `--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader` | `slice.spec.ts` (play → move → kills → level-up → pause/resume, `errors === 0`, then the same pass with `?gl=webgl2` asserting `backend === "webgl2"`), `weapons-a.spec.ts` (the grant path in the live loop for the gun, medieval and instant kinds) and `weapons-b.spec.ts` (the alien kinds plus the heat and charge gauges, read back as `heat` / `venting` / `energy` per hand), and the enemies spec pins the melee five through the live loop (`enemies-a.spec.ts`, which spawns rings of bodies through `__forgeDebug.spawn` and lets the real damage pass prove the splitter's split). Later tasks add `persistence.spec.ts` (save/reload/resume), `death.spec.ts` (death → summary) and `bench.spec.ts` (writes `bench-results.json`, reports only) |
+| `tests/unit/*.test.ts` | vitest, `environment: "node"`, no DOM | rng + spatial hash; every weapon kind (spread, pierce, falloff, reload, heat, chain, DoT); every AI behaviour (the melee five in `enemies-a.test.ts` — charger telegraphs before dashing, splitter spawns children, exploder AoE — and the ranged trio in `enemies-b.test.ts`: shooter band and 24-tick flash, grenade burst at its telegraphed ring, healer pulse, plus the enemy-round pool's i-frame gate); XP/level-up, powerup tiers capped at 5, dash i-frames; the chapter arc and its cover (`obstacles.test.ts`); the wave script (`waves.test.ts`: a scripted pack lands at its second and at no second before, nothing comes down inside cover or inside the 32×18 m view rect over all ten layouts, and the chapter's `hp` scale reaches the bodies); save/load round-trip; same seed + inputs → same `hashWorld`; the storage layer against a `Map` fake and a fake that throws (`persistence.test.ts`: the three keys, corrupt and partial payloads, the 50-row history cap, chapter unlocks, the autosave interval measured in play seconds); the shell's save timing (`app-save.test.ts` drives `advance(nowMs)` with no renderer and no DOM, and pins *when* the writes happen: one at 30 s of play and one per interval after it, none on the title screen, a chapter's end and a run's end each reaching the meta file, a loaded run resuming at its saved tick and playing on, and a storage that throws heard once per interval rather than per frame); `purity.test.ts` for the import rule |
+| `tests/e2e/*.spec.ts` | Playwright 1.48.2, Chromium from `/ms-playwright`, flags `--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader` | `slice.spec.ts` (play → move → kills → level-up → pause/resume, `errors === 0`, then the same pass with `?gl=webgl2` asserting `backend === "webgl2"`), `weapons-a.spec.ts` (the grant path in the live loop for the gun, medieval and instant kinds) and `weapons-b.spec.ts` (the alien kinds plus the heat and charge gauges, read back as `heat` / `venting` / `energy` per hand), and the enemies spec pins the melee five through the live loop (`enemies-a.spec.ts`, which spawns rings of bodies through `__forgeDebug.spawn` and lets the real damage pass prove the splitter's split). `save.spec.ts` leaves the page: play, pause, Save, reload, Continue — the reload is the point, since a new app on a new `World` has to read the run back out of the same storage — plus the pause panel's Load and a check that an empty shelf offers no Continue, all read as `player.x` / `tick` restored within a few frames of drift and `errors === 0`. Later tasks add `death.spec.ts` (death → summary) and `bench.spec.ts` (writes `bench-results.json`, reports only) |
 | `tools/bench.ts` | `tsx`, Node, no renderer | headless sim gate: median ≤4 ms/step at 1,000 enemies over 600 ticks, non-zero exit above that |
 | `tools/replay.ts` | `tsx` | replays a recorded `{seed, inputs}` log and asserts the hash matches |
-| `forge-scenarios.json` | root | the scenario steps and `state` assertions the Playwright specs read. A new mechanic lands with a step or assertion that fails without it |
+| `forge-scenarios.json` | root | the scenario steps and `state` assertions the Playwright specs read. A new mechanic lands with a step or assertion that fails without it. Its `save` scenario drives Save → Menu → Continue in one page, because the step vocabulary has no reload — the spec is where the cross-page round trip is pinned |
 
 Unit tests construct a `World` from a seed and feed it `InputFrame`s — no DOM, no renderer, no audio context.
 Playwright specs assert on `__forgeState()`, not on pixels.

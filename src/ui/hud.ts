@@ -18,7 +18,15 @@ import './theme.css';
  */
 
 /** What an HUD control asks the game to do. */
-export type HudCommand = 'start' | 'pause' | 'resume' | 'restart' | 'menu' | 'reroll';
+export type HudCommand =
+  | 'start'
+  | 'pause'
+  | 'resume'
+  | 'restart'
+  | 'menu'
+  | 'reroll'
+  | 'save'
+  | 'load';
 
 /** The slice of the game the HUD reads. Kept structural so the HUD needs no import
  * from the layer that owns it. */
@@ -28,6 +36,12 @@ export interface HudView {
   /** Take level-up card `index`, from a click. The keys go through the sampler. */
   pick(index: number): void;
   command(cmd: HudCommand): void;
+  /**
+   * Whether a run is waiting in storage. Asked once per scene change, which is the only
+   * moment it matters: it decides whether the title offers Continue and whether the pause
+   * menu offers Load, and a screen that cannot do a thing should not show a button for it.
+   */
+  hasSave(): boolean;
 }
 
 export interface Hud {
@@ -58,10 +72,25 @@ function setFill(node: HTMLElement, fraction: number): void {
   if (node.style.width !== width) node.style.width = width;
 }
 
-function button(parent: HTMLElement, label: string, command: HudCommand, view: () => HudView): HTMLButtonElement {
+/**
+ * One control.
+ *
+ * `action` is what the button *means* to anything reading the overlay from the outside —
+ * a scenario clicks `[data-action='save']` — and defaults to the command. They differ once:
+ * the title's Continue and the pause menu's Load are both `load`, but only the first is
+ * Continue, and a selector that cannot tell two buttons apart cannot click one of them.
+ */
+function button(
+  parent: HTMLElement,
+  label: string,
+  command: HudCommand,
+  view: () => HudView,
+  action: string = command,
+): HTMLButtonElement {
   const b = el('button');
   b.className = 'btn';
   b.type = 'button';
+  b.dataset['action'] = action;
   b.textContent = label;
   b.addEventListener('click', () => {
     // Focus has to go back to the page or the next Space press re-activates the
@@ -159,11 +188,15 @@ export function createHud(root: HTMLElement): Hud {
   });
   const reroll = button(cardPanel, 'Reroll  [R]', 'reroll', () => view!);
 
-  // Title menu: the scene machine's entry point, so Start has to be reachable.
+  // Title menu: the scene machine's entry point, so Start has to be reachable. Continue
+  // sits above it and starts hidden — it is only ever offered when there is a run in
+  // storage to come back to, and the game that decides is the shell, not this file.
   const menu = make('div', 'menu', root);
   make('h1', 'title', menu).textContent = 'Neon Horde';
   make('p', 'subtitle', menu).textContent = 'A factory floor, a thousand bodies, one pistol.';
   const menuButtons = make('div', 'stack', menu);
+  const continueBtn = button(menuButtons, 'Continue', 'load', () => view!, 'continue');
+  continueBtn.hidden = true;
   button(menuButtons, 'Start  [Enter]', 'start', () => view!);
 
   const pausePanel = make('div', 'panel pause', root);
@@ -171,6 +204,9 @@ export function createHud(root: HTMLElement): Hud {
   make('p', 'hint', pausePanel).textContent = 'WASD move · Space or Shift dash · Q swap hands · Esc resume';
   const pauseButtons = make('div', 'stack', pausePanel);
   button(pauseButtons, 'Resume  [Esc]', 'resume', () => view!);
+  button(pauseButtons, 'Save run', 'save', () => view!, 'save');
+  const loadBtn = button(pauseButtons, 'Load saved run', 'load', () => view!, 'load');
+  loadBtn.hidden = true;
   button(pauseButtons, 'Restart run', 'restart', () => view!);
   button(pauseButtons, 'Menu', 'menu', () => view!);
 
@@ -255,6 +291,14 @@ export function createHud(root: HTMLElement): Hud {
         root.dataset['scene'] = scene;
         last.scene = scene;
         last.cards = '';
+
+        // The two ways back into a saved run, offered only while one exists. Re-read on
+        // every screen change rather than every frame: the answer only moves when a run
+        // ends or is written, and both happen across a screen change.
+        const resumable = hudView.hasSave();
+        continueBtn.hidden = !resumable;
+        loadBtn.hidden = !resumable;
+
         if (scene === 'levelup') renderCards(world);
         if (scene === 'summary') {
           setText(summaryHead, world.player.alive ? 'Run over' : 'You died');

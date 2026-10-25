@@ -21,6 +21,7 @@ import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
 import { createApp, type App, type ForgeState } from './game/app';
+import type { StorageLike } from './game/persistence';
 import { createView, type View } from './render/renderer';
 import { createHud } from './ui/hud';
 
@@ -40,6 +41,34 @@ function readParams(): { seed: number; forceWebGL: boolean } {
     // A missing location (a non-browser import) keeps the defaults.
   }
   return { seed, forceWebGL };
+}
+
+/**
+ * The run's storage, handed to the shell as a port.
+ *
+ * `Storage` already satisfies `StorageLike`, so this is a hand-over rather than an adapter;
+ * the wrapper exists for the two ways it can fail. Reading `window.localStorage` throws by
+ * itself in private-mode Safari and on a page with storage blocked, and a storage that
+ * throws on every call is what the persistence layer is written against (it counts the
+ * failure and carries on with the defaults). Returning `null` means the game plays with no
+ * saves at all rather than with a broken one.
+ */
+function openStorage(): StorageLike | null {
+  try {
+    const store = globalThis.localStorage;
+    if (!store) return null;
+    return {
+      getItem: (key) => store.getItem(key),
+      setItem: (key, value) => {
+        store.setItem(key, value);
+      },
+      removeItem: (key) => {
+        store.removeItem(key);
+      },
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** The menu state served before the app exists, so `__forgeState` is never absent. */
@@ -126,7 +155,7 @@ async function boot(): Promise<void> {
   backend = view ? view.backend : 'none';
 
   const hud = ui ? createHud(ui) : null;
-  app = createApp({ view, hud, seed, backend });
+  app = createApp({ view, hud, seed, backend, storage: openStorage() });
   w.__forgeDebug = app.debug;
 
   if (view) {

@@ -29,6 +29,32 @@ belong; [TECH.md](TECH.md) the pinned engine versions and why they were chosen;
 weapon, an enemy or a power-up; `ARCHITECTURE.md` has the rules a new piece of
 content has to follow.
 
+## Saves, settings and Continue
+
+Three versioned JSON keys in `localStorage`, all under the app's own name:
+
+| key | what it holds |
+|---|---|
+| `neonhorde.save.v1` | the run you can come back to: seed, chapter, tick, wave clock, the player, both weapon hands, power-ups, score and kills, plus the floors and the pools byte for byte |
+| `neonhorde.settings.v1` | volumes, quality tier, resolution scale, auto-fire and shake. Read today, written when the settings screen lands |
+| `neonhorde.meta.v1` | unlocked chapters, best time per chapter, and the last 50 runs for the history screen |
+
+A run is written every 30 seconds of *play* — a pause or a level-up freeze holds that clock
+still, so time spent reading the pause menu costs nothing — at the end of every chapter, and
+whenever you ask for it. It is cleared as soon as a run is over, dead or won: a slot only ever
+holds something you could actually resume.
+
+To reach it: `Esc` pauses, and the pause panel offers **Save run** and **Load saved run**. The
+title screen shows **Continue** while a save is waiting and puts that run back at the tick and
+the place it was written at, mid-fight and mid-chapter if that is where it stopped. Both
+screens hide the button when there is nothing to load. Storage that refuses — private mode, a
+full quota — leaves the game playing without saves rather than broken, and the failure is
+counted in `__forgeState().errors` instead of swallowed.
+
+Pinned by `tests/unit/app-save.test.ts` (when the writes happen, headless),
+`tests/e2e/save.spec.ts` (play → pause → Save → reload the page → Continue, plus the
+pause-screen Load) and the `save` scenario in `forge-scenarios.json`.
+
 ## Adding content
 
 Content is data: one entry in one file under `src/content`, which `src/sim` reads. A new
