@@ -1,7 +1,7 @@
 import { POWERUPS, baseStats, type PowerupDef } from '../content/powerups';
-import { WEAPONS } from '../content/weapons';
+import { WEAPONS, type WeaponDef } from '../content/weapons';
 import { xpProgress } from '../sim/systems/pickups';
-import { TUNE, type World } from '../sim/world';
+import { TUNE, type WeaponSlot, type World } from '../sim/world';
 import './theme.css';
 
 /**
@@ -286,11 +286,38 @@ export function createHud(root: HTMLElement): Hud {
         const slot = world.slots[i];
         const def = slot && slot.weapon >= 0 ? WEAPONS[slot.weapon] : undefined;
         setText(node.name, def ? def.id : 'empty hand');
-        setText(node.ammo, def ? (slot.reload > 0 ? 'reloading' : `${slot.ammo}/${def.ammo.mag}`) : '');
-        setFill(node.gaugeFill, def && slot ? slot.ammo / def.ammo.mag : 0);
+        setText(node.ammo, def && slot ? gaugeText(slot, def) : '');
+        setFill(node.gaugeFill, def && slot ? gaugeFill(slot, def) : 0);
         node.slot.classList.toggle('active', i === world.activeSlot);
         node.slot.classList.toggle('reloading', (slot?.reload ?? 0) > 0);
       }
     },
   };
+}
+
+/**
+ * What a hand's gauge says.
+ *
+ * Three constraints, three readings, and each shows the number the player can act on:
+ * a magazine counts rounds, a heat hand says `venting` while it is locked out (its
+ * heat is already spent, so the number would be noise), and a charge hand counts the
+ * charge left, because that is what decides whether the next shot happens.
+ */
+function gaugeText(slot: WeaponSlot, def: WeaponDef): string {
+  if (slot.reload > 0) return 'reloading';
+  if (def.ammo) return `${slot.ammo}/${def.ammo.mag}`;
+  if (def.heat) return slot.venting ? 'venting' : 'heat';
+  if (def.energy) return `${Math.round(slot.energy)}`;
+  return '';
+}
+
+/**
+ * How full that gauge is, 0..1: the constraint that is left, not the one that is gone,
+ * so every hand reads the same way — a full bar means ready.
+ */
+function gaugeFill(slot: WeaponSlot, def: WeaponDef): number {
+  if (def.ammo) return def.ammo.mag > 0 ? slot.ammo / def.ammo.mag : 0;
+  if (def.heat) return def.heat.max > 0 ? Math.max(0, 1 - slot.heat / def.heat.max) : 0;
+  if (def.energy) return def.energy.capacity > 0 ? slot.energy / def.energy.capacity : 0;
+  return 0;
 }

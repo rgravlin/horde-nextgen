@@ -49,28 +49,43 @@ Add a `WeaponDef`.
 | `knockback` | m/s shove, which staggers the hit enemy for 3 ticks. A sweep and a burst shove outward from their own centre, not along the aim |
 | `falloff` | `[start, end, mult]` damage multiplier by distance flown, held flat past `end`. An `arc` burst takes no falloff, so its three entries are equal |
 | `ammo` | `{mag, reload}`; an empty hand reloads on its own and cannot fire while it does. For `melee` and `arc` a magazine entry is one swing or one load |
+| `heat` | `{perShot, coolPerSec, max, recover}`: a barrel gauge instead of a magazine. Each trigger pull — each firing tick, for a `beam` — cooks `perShot`, every tick sheds `coolPerSec`, and at `max` the hand vents until it cools back to `recover`. Set `perShot` against what the gun actually does, not against `rate`: on a 1/60 s grid a cooldown of `1/11` s waits out six ticks, so the real cycle is ten bolts a second |
+| `energy` | `{capacity, perShot, regenPerSec}`: a charge pool instead of a magazine, refilling on the ticks it is not spent. No reload pause — spend it down and the gun dribbles until the cell recovers. A `chain` bolt that finds nobody to chain to spends nothing |
+| `dot` | `{dps, seconds}`: a hit leaves the body burning. One channel per body — a second application renews the timer and keeps the stronger rate instead of adding a second tick. Applied and ticked in `src/sim/systems/status.ts` |
+| `chain`, `chainRadius` | for `chain`: how many bodies a bolt jumps to after the first, and the metres each jump may cross. A bolt will not spend two jumps on one body |
+| `aoe` | metres: the burst radius of an `arc` shell and of an `orb`; everything overlapping it takes full damage. For `orb` the same circle is the vacuum's reach |
+| `pull` | m/s a singularity drags bodies inside `aoe` toward itself while it flies, then pops them in that circle |
 | `pellets` | rounds one trigger pull spawns, each with its own `spread` draw — the shotgun's cone |
 | `armorPen` | fraction of the target's armour ignored, taken off before the `armor` subtraction |
 | `charge` | `{time, speed, dmg}`: a held trigger builds a draw and looses at a full draw or the moment the button comes up, so a panicked tap still fires, flatter and weaker |
-| `aoe` | metres: the burst radius of an `arc` shell; everything overlapping it takes full damage |
 
-`fire` names the delivery path, and four of the seven kinds have one: `projectile` and
-`arc`, beside `hitscan` and `melee`, all of them in `src/sim/systems/projectiles.ts`. A
-weapon naming a kind the sim does not implement spends no ammo and makes no noise, so a
-half-finished kind reads as an empty gun rather than as a gun that works badly.
+`fire` names the delivery path, and all seven kinds have one in
+`src/sim/systems/projectiles.ts`: `projectile`, `hitscan`, the `melee` sweep, the lobbed
+`arc` shell, the continuous `beam`, the jumping `chain` bolt and the drifting `orb`. A
+`beam` and a `chain` bolt resolve the tick they are called; a `chain` bolt that finds
+nobody is never thrown, and an `orb` resolves where it gets to rather than where it was
+aimed. Every hit reports one `Hit` event, the beam's cuts included — that event is what a
+hit flash, an impact burst and a damage number get drawn from; only the burn stays quiet.
 
-Ammo, cooldown and reload live on the hand (`world.slots[0..1]`), never on the def, so
-two guns never share a magazine. Auto-fire (on by default, and the reason a run keeps
+Ammo, heat, charge, cooldown and reload live on the hand (`world.slots[0..1]`), never on
+the def, so two guns never share a magazine or a barrel, and a hand spends exactly one of
+the three gauges its def declares. Auto-fire (on by default, and the reason a run keeps
 shooting while the player is busy moving) aims at the nearest body, and for a shell it
 *leads* it: the burst is centred where that body will be when the shell arrives, at the
 distance that takes, because a 1.2 s flight aimed at a body's current footprint lands a
-whole flight behind the crowd it was fired at.
+whole flight behind the crowd it was fired at. A singularity is pointed, not led — it pops
+where it arrives, so chasing a body that has not got there yet spends the flight on empty
+floor.
 
-To hand a weapon to the player: `world.slots[1].weapon = i` plus its magazine in a unit
-test — a swap refuses an empty hand — or `__forgeDebug.giveWeapon(id)` in a browser one.
-`tests/e2e/weapons-a.spec.ts` is where the grant path is pinned, because
-`forge-scenarios.json` has no step that evaluates JavaScript (its vocabulary is click,
-fill, press, wait, hold, mouse, shot, state) and no key grants a weapon.
+To hand a weapon to the player: `loadSlot(world.slots[1], i)` — one call that fills the
+magazine, the charge and the gauge state, which is what the unit tests and
+`__forgeDebug.giveWeapon(id)` both use (a swap refuses an empty hand).
+`tests/e2e/weapons-a.spec.ts` and `tests/e2e/weapons-b.spec.ts` are where the grant path
+is pinned — the first the gun, medieval and instant kinds, the second the alien ones plus
+the two gauges, read back through `__forgeState()` as `heat` / `venting` / `energy` per
+hand — because `forge-scenarios.json` has no step that evaluates JavaScript (its
+vocabulary is click, fill, press, wait, hold, mouse, shot, state) and no key grants a
+weapon.
 
 ### An enemy — `src/content/enemies.ts`, read by `src/sim/systems/enemies.ts`
 

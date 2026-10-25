@@ -92,7 +92,11 @@ describe('weapons', () => {
     place(w, 6, 0, 500);
     const slot = w.slots[0];
     const pistol = WEAPONS[0];
-    expect(slot.ammo).toBe(pistol.ammo.mag);
+    // The pistol's own magazine and reload, read out of the table instead of written
+    // down a second time here (AGENTS.md: one source of truth for a constant).
+    const mag = pistol.ammo ? pistol.ammo.mag : 0;
+    const reloadTime = pistol.ammo ? pistol.ammo.reload : 0;
+    expect(slot.ammo).toBe(mag);
 
     run(w, 1, shoot);
     expect(countEvents(w, Ev.Shot)).toBe(1);
@@ -100,7 +104,7 @@ describe('weapons', () => {
     // Empty the mag by hand and keep the trigger down: the empty mag buys a
     // reload, and a reloading gun does not shoot however hard you hold fire.
     slot.ammo = 0;
-    slot.reload = pistol.ammo.reload;
+    slot.reload = reloadTime;
     clearEvents(w);
     run(w, 30, shoot);
     expect(countEvents(w, Ev.Shot)).toBe(0);
@@ -111,7 +115,7 @@ describe('weapons', () => {
     run(w, 50, shoot);
     expect(slot.reload).toBe(0);
     expect(countEvents(w, Ev.Shot)).toBeGreaterThan(0);
-    expect(slot.ammo).toBeLessThan(pistol.ammo.mag);
+    expect(slot.ammo).toBeLessThan(mag);
   });
 
   it('fires on a held trigger, and on auto-fire only when something is in range', () => {
@@ -154,7 +158,7 @@ describe('weapons', () => {
 
     expect(w.activeSlot).toBe(1);
     expect(w.slots[1].ammo).toBeLessThan(3);
-    expect(w.slots[0].ammo).toBe(WEAPONS[0].ammo.mag);
+    expect(w.slots[0].ammo).toBe(WEAPONS[0].ammo ? WEAPONS[0].ammo.mag : 0);
     expect(countEvents(w, Ev.Shot)).toBeGreaterThan(1);
   });
 });

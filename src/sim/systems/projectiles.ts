@@ -1,7 +1,7 @@
 /**
  * Shot physics: everything that resolves damage after the trigger decision.
  *
- * Three delivery paths live here, one per fire kind that needs one:
+ * Seven delivery paths live here, one per fire kind:
  *
  * - `projectile` — a round flies and is tested as the segment it swept this tick,
  *   because a 55 m/s round covers 0.92 m per tick, further than an enemy's radius,
@@ -10,10 +10,20 @@
  *   tick's spatial hash and stopped once its pierce budget was spent.
  * - `melee` — an arc sweep around the player.
  * - `arc` — a shell that flies the full length it was lobbed and bursts there.
+ * - `beam` — the same march, every tick the trigger is held, for as long as the
+ *   barrel has heat left. Damage is measured per second, so it goes through
+ *   `throughArmor` on the tick's time base (see `systems/status.ts`), and it reports
+ *   one `Hit` per body per tick like every other path: a continuous weapon that
+ *   cannot light a hit flash has no presentation channel at all.
+ * - `chain` — a bolt that takes the nearest body and then jumps to the next nearest
+ *   body it has not already hurt, up to the def's jump count.
+ * - `orb` — a singularity that drags bodies inside its radius toward itself for its
+ *   whole flight and detonates inside the same circle.
  *
  * Nothing here allocates: candidates come out of the tick's shared `world.query`
- * buffer, the ray's march is a loop over probe windows rather than a list, and the
- * only events are the fixed-shape ones the renderer and audio read later.
+ * buffer, the ray's march is a loop over probe windows rather than a list, the chain
+ * remembers its own hit list in one module-scratch array, and the only events are the
+ * fixed-shape ones the renderer and audio read later.
  */
 
 import { ENEMIES } from '../../content/enemies';
@@ -21,6 +31,7 @@ import { WEAPONS, type WeaponDef } from '../../content/weapons';
 import { queryRadius } from '../spatialHash';
 import { DT, Ev, TUNE, pushEvent, release, type World } from '../world';
 import { killEnemy } from './enemies';
+import { applyBurn, throughArmor } from './status';
 
 /** Metres of per-tick travel the hit query pads for, beyond the widest body. */
 const HIT_SLACK = 0.15;
@@ -42,9 +53,16 @@ const PROBE_STEP = 2;
 const EPS = 1e-6;
 
 /**
+ * The bodies one chain bolt has already spent a jump on, reset by the bolt that uses
+ * it. Longest chain in content is five jumps plus the first body, and the bolt stops
+ * at the end of this array if content ever asks for more.
+ */
+const chainHits = new Int32Array(16);
+
+/**
  * Damage multiplier at `distance`, from the def's [start, end, mult].
  *
- * Shared by all four paths: falloff always keys off the distance the damage
+ * Shared by every path: falloff always keys off the distance the damage
  * travelled, never off the target's distance from the player, so a sweep and a ray
  * that reach the same body for the same reason report the same number.
  */
@@ -67,8 +85,17 @@ function falloff(def: WeaponDef, distance: number): number {
  * for STAGGER_TICKS, which is what makes knockback a positioning tool rather than
  * only a number.
  *
- * `slot` is the projectile that landed it, or -1 for a ray or a sweep, which has no
- * entity to name.
+ * Every hit writes one `Hit` event, continuous delivery included: the event names the
+ * body and the place, which is what a hit flash, an impact burst and a damage number
+ * are drawn from, and the tests read it as the record of who was hurt. A burn is
+ * deliberately not an event (see `tickBurn` in `systems/status.ts`), so the ring
+ * carries the hits and not the ticking.
+ *
+ * A hit that carries a `dot` leaves the body burning through `applyBurn`: one channel
+ * per body, so a second arrow renews the burn instead of doubling the tick.
+ *
+ * `slot` is the projectile that landed it, or -1 for a ray, a sweep, a bolt or a
+ * burst, which has no entity to name.
  */
 function damage(
   w: World,
@@ -78,25 +105,33 @@ function damage(
   dirx: number,
   diry: number,
   slot: number,
+  scale: number,
 ): void {
   const enemies = w.enemies;
   const enemy = ENEMIES[enemies.kind[j]];
   const pen = def.armorPen || 0;
   const armor = enemy.armor * (1 - pen);
 
-  const dealt = dmg > armor ? dmg - armor : 1;
-  enemies.hp[j] -= dealt;
+  enemies.hp[j] -= throughArmor(armor, dmg * scale, scale);
 
-  if (def.knockback > 0 && enemies.hp[j] > 0) {
+  // `a` is the projectile slot, `b` the enemy slot: enough for a tracer, an impact
+  // burst and a damage number without a per-hit object. Pushed before the kill so a
+  // fatal hit still owns its impact.
+  pushEvent(w, Ev.Hit, slot, j, enemies.x[j], enemies.y[j]);
+
+  if (enemies.hp[j] <= 0) {
+    killEnemy(w, j);
+    return;
+  }
+
+  if (def.knockback > 0) {
     enemies.vx[j] = dirx * def.knockback;
     enemies.vy[j] = diry * def.knockback;
     enemies.state[j] = STAGGER_TICKS;
   }
 
-  // `a` is the projectile slot, `b` the enemy slot: enough for a tracer, an impact
-  // burst and a damage number without a per-hit object.
-  pushEvent(w, Ev.Hit, slot, j, enemies.x[j], enemies.y[j]);
-  if (enemies.hp[j] <= 0) killEnemy(w, j);
+  const dot = def.dot;
+  if (dot) applyBurn(w, j, dot);
 }
 
 /**
@@ -115,14 +150,19 @@ function damage(
  * Bodies wholly behind the ray's start are ignored (that is not what the gun was
  * pointed at), and the march stops the moment the pierce budget is gone, which is
  * the "no more" half of a piercing shot.
+ *
+ * `scale` is the time base of the charge (see `throughArmor` in `systems/status.ts`):
+ * 1 for one instant ray, DT for a beam running this same march again every tick, where
+ * `def.dmg` is damage per second. Both report their hits; only the burn stays quiet.
  */
-export function castRay(
+function march(
   w: World,
   def: WeaponDef,
   ox: number,
   oy: number,
   dirx: number,
   diry: number,
+  scale: number,
 ): void {
   const enemies = w.enemies;
   const query = w.query;
@@ -166,10 +206,124 @@ export function castRay(
       if (entry > def.range) continue;
       if (Math.floor(entry / PROBE_STEP) !== win) continue;
 
-      damage(w, def, j, base * falloff(def, entry), dirx, diry, -1);
+      damage(w, def, j, base * falloff(def, entry), dirx, diry, -1, scale);
       budget--;
     }
   }
+}
+
+/** One instant ray: the sniper's shot, resolved the tick the trigger went down. */
+export function castRay(
+  w: World,
+  def: WeaponDef,
+  ox: number,
+  oy: number,
+  dirx: number,
+  diry: number,
+): void {
+  march(w, def, ox, oy, dirx, diry, 1);
+}
+
+/**
+ * One tick of a beam: the same march, on the tick's time base.
+ *
+ * Called again every tick the trigger is held, which is what "continuous" means
+ * here: the pierce budget renews each tick, so a beam cuts through its four bodies
+ * sixty times a second until the barrel vents. It writes a `Hit` for each body each
+ * tick — 240 events a second at the very most, four a frame, which is what the ring
+ * is for — because a hit flash and a damage number have nothing else to read.
+ */
+export function castBeam(
+  w: World,
+  def: WeaponDef,
+  ox: number,
+  oy: number,
+  dirx: number,
+  diry: number,
+): void {
+  march(w, def, ox, oy, dirx, diry, DT);
+}
+
+/**
+ * One chain bolt: take a body, then jump.
+ *
+ * The bolt starts at the muzzle and needs a body to start with — a bolt that finds
+ * nobody is not fired and spends nothing — and then walks to the closest body it has
+ * not already hurt within `chainRadius` of where it stands, up to `chain` jumps. Bodies
+ * at 0 HP are skipped, so a bolt cannot spend a jump on a corpse, and the list of
+ * bodies it has used lives in one module-scratch array rather than in a set it would
+ * have to allocate per shot.
+ *
+ * A jump starts from the *body's* position even when the previous link died, because
+ * arcing through a corpse is what the weapon looks like doing. Distance — and so the
+ * falloff — is measured along the bolt's path, not as the crow flies, so a bolt that
+ * zigzags through a pack pays for it.
+ *
+ * Returns the number of bodies it hurt, which is 0 when there was nothing to hit.
+ */
+export function castChain(w: World, def: WeaponDef, x: number, y: number): number {
+  const enemies = w.enemies;
+  const query = w.query;
+  const jump = def.chainRadius || 0;
+  const budget = (def.chain || 0) + 1;
+  const base = def.dmg * w.stats.dmg;
+  if (jump <= 0) return 0;
+
+  let cx = x;
+  let cy = y;
+  let travelled = 0;
+  let links = 0;
+
+  for (let hop = 0; hop < budget && links < chainHits.length; hop++) {
+    // The first hop reaches the whole acquisition radius from the muzzle; after that
+    // the bolt only has to find a body within one jump of the last one.
+    const r = hop === 0 ? def.range : jump;
+    const found = queryRadius(w.hash, enemies.x, enemies.y, enemies.alive, cx, cy, r, query);
+
+    let next = -1;
+    let best2 = Infinity;
+    for (let k = 0; k < found; k++) {
+      const j = query[k];
+      if (enemies.hp[j] <= 0) continue;
+
+      let used = false;
+      for (let u = 0; u < links; u++) {
+        if (chainHits[u] === j) {
+          used = true;
+          break;
+        }
+      }
+      if (used) continue;
+
+      const jx = enemies.x[j] - cx;
+      const jy = enemies.y[j] - cy;
+      const d2 = jx * jx + jy * jy;
+      if (d2 >= best2) continue;
+      best2 = d2;
+      next = j;
+    }
+    if (next < 0) break;
+
+    const dx = enemies.x[next] - cx;
+    const dy = enemies.y[next] - cy;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    travelled += d;
+    // A jump of no length (two bodies on one point) has no direction to shove along,
+    // so it takes the +x pair, as a sweep on a body dead centre does.
+    let shx = 1;
+    let shy = 0;
+    if (d > EPS) {
+      shx = dx / d;
+      shy = dy / d;
+    }
+    damage(w, def, next, base * falloff(def, travelled), shx, shy, -1, 1);
+
+    chainHits[links++] = next;
+    cx = enemies.x[next];
+    cy = enemies.y[next];
+  }
+
+  return links;
 }
 
 /**
@@ -227,16 +381,17 @@ export function sweepMelee(
       // Both vectors are unit-length by construction, so the dot product is the
       // cosine of the angle between them and one comparison settles the arc test.
       if ((dx * ax + dy * ay) / d < cosHalf) continue;
-      damage(w, def, j, base * falloff(def, d), dx / d, dy / d, -1);
+      damage(w, def, j, base * falloff(def, d), dx / d, dy / d, -1, 1);
     } else {
-      damage(w, def, j, base, ax, ay, -1);
+      damage(w, def, j, base, ax, ay, -1, 1);
     }
     budget--;
   }
 }
 
 /**
- * Burst a lobbed shell at (x, y).
+ * Burst whatever is at (x, y) — a lobbed shell, or a singularity at the end of its
+ * drift.
  *
  * Everything whose body overlaps the burst circle is hurt for full damage — no
  * falloff, because the radius is already the whole point of the weapon — and shoved
@@ -265,11 +420,54 @@ function burst(w: World, def: WeaponDef, weapon: number, x: number, y: number, f
     if (d2 > reach * reach) continue;
 
     const d = Math.sqrt(d2);
-    if (d > EPS) damage(w, def, j, base, dx / d, dy / d, -1);
-    else damage(w, def, j, base, fx, fy, -1);
+    if (d > EPS) damage(w, def, j, base, dx / d, dy / d, -1, 1);
+    else damage(w, def, j, base, fx, fy, -1, 1);
   }
 
   pushEvent(w, Ev.Explosion, weapon, Math.round(r * 10), x, y);
+}
+
+/**
+ * Drag everything inside the orb's radius toward it.
+ *
+ * A displacement rather than a velocity, deliberately: the enemy pass has already run
+ * by the time a shot resolves, so a shove written into `vx`/`vy` would be overwritten
+ * by the next tick's steering and the vacuum would move nothing. Displacing instead
+ * keeps the drag small — 7 m/s is 0.117 m a tick, inside the padding the hit queries
+ * allow for a body having moved since the grid was built — and reads the way it looks,
+ * a funnel of bodies pulled off their line.
+ *
+ * A body is never dragged past the middle, so nothing oscillates around the orb.
+ */
+function drag(w: World, def: WeaponDef, x: number, y: number): void {
+  const r = def.aoe || 0;
+  const speed = def.pull || 0;
+  if (r <= 0 || speed <= 0) return;
+
+  const enemies = w.enemies;
+  const found = queryRadius(w.hash, enemies.x, enemies.y, enemies.alive, x, y, r + HIT_PAD, w.query);
+  const step = speed * DT;
+
+  for (let k = 0; k < found; k++) {
+    const j = w.query[k];
+    if (enemies.hp[j] <= 0) continue;
+
+    const dx = enemies.x[j] - x;
+    const dy = enemies.y[j] - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 > r * r || d2 <= EPS) continue;
+
+    const d = Math.sqrt(d2);
+    const pull = step < d ? step : d;
+    const nx = enemies.x[j] - (dx / d) * pull;
+    const ny = enemies.y[j] - (dy / d) * pull;
+
+    // Same arena clamp the enemy pass uses, so a vacuum cannot fling a body through a
+    // wall — the orb's radius reaches 3.2 m and the arena edge is only 0.4 m away.
+    const radius = ENEMIES[enemies.kind[j]].radius;
+    enemies.x[j] = Math.min(Math.max(nx, w.minX + radius), w.maxX - radius);
+    enemies.y[j] = Math.min(Math.max(ny, w.minY + radius), w.maxY - radius);
+  }
 }
 
 /**
@@ -286,7 +484,9 @@ function burst(w: World, def: WeaponDef, weapon: number, x: number, y: number, f
  * muzzle still be reached.
  *
  * An `arc` shell does none of this while it flies: it carries no hit budget and
- * detonates at the end of its flight, so a shot can be walked under on purpose.
+ * detonates at the end of its flight, so a shot can be walked under on purpose. An
+ * `orb` is the same shape of flight plus one thing — it drags on the way — and it too
+ * resolves only at the end, which is why it is a weapon for where a crowd is going.
  */
 export function updateProjectiles(w: World): void {
   const shots = w.shots;
@@ -323,11 +523,12 @@ export function updateProjectiles(w: World): void {
     shots.age[i] += DT;
     shots.life[i] -= DT;
 
-    if (def.fire === 'arc') {
+    if (def.fire === 'arc' || def.fire === 'orb') {
       if (shots.life[i] <= 0) {
         burst(w, def, shots.kind[i], x1, y1, dirx, diry);
         release(shots, i);
       } else {
+        if (def.fire === 'orb') drag(w, def, x1, y1);
         shots.x[i] = x1;
         shots.y[i] = y1;
       }
@@ -371,7 +572,7 @@ export function updateProjectiles(w: World): void {
       const oy = enemies.y[j] - (y0 + diry * t);
       if (ox * ox + oy * oy > hitR2) continue;
 
-      damage(w, def, j, dmg, dirx, diry, i);
+      damage(w, def, j, dmg, dirx, diry, i, 1);
       hits--;
     }
 

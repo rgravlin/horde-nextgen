@@ -26,7 +26,7 @@ outside `src/sim` may decide gameplay outcomes.
 | Module | Owns | May import |
 |---|---|---|
 | `src/content/` | typed data only: `weapons.ts`, `enemies.ts`, `powerups.ts`, `levels.ts`, `types.ts` (the `WeaponDef`/`EnemyDef`/`PowerupDef`/`LevelDef` schemas, defined once) | nothing |
-| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,projectiles,enemies,pickups,waves}.ts`, later `serialize.ts`, `replay.ts`, `config.ts` | `src/content` only |
+| `src/sim/` | `world.ts` (`World`, pool allocation, the pool caps and tuning in one `TUNE`), `step.ts` (system order), `input.ts` (the `InputFrame` type), `rng.ts` (xoshiro128**), `spatialHash.ts`, `hash.ts`, `systems/{weapons,projectiles,status,enemies,pickups,waves}.ts`, later `serialize.ts`, `replay.ts`, `config.ts` | `src/content` only |
 | `src/render/` | `renderer.ts` (WebGPURenderer + `renderer.init()`, backend probe), `camera.ts` (three-quarter chase cam, interpolation, shake), `instancing.ts` (one `InstancedMesh` per archetype + props), `particles.ts` (TSL compute particles), `post.ts` (`RenderPipeline`: bloom → chromatic → ACES), `lights.ts` (pooled point lights), `assets.ts` (glTF loads), `quality.ts` (Low/Med/High/Ultra knobs) | `three`, `three/webgpu`, `three/tsl`, read-only `sim`/`content` |
 | `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
 | `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
@@ -66,10 +66,14 @@ DOM/gamepad events ──▶ InputSampler ──(once per tick)──▶ InputFr
   pickups/XP → wave spawns. The grid is built before the passes that query it, and a kill is resolved where the
   damage lands, so a corpse never spends a tick blocking the crowd or soaking a piercing shot.
 - Delivery lives one file away from the trigger: `systems/weapons.ts` owns the hand, the cooldown, the magazine, the
-  draw and the aim, and hands the shot to `systems/projectiles.ts`, which owns everything after the trigger — the
-  swept-segment test for a round, the march for a ray, the arc of a sweep and the burst of a lobbed shell. Damage,
-  falloff, pierce and knockback still all come off the shot's `WeaponDef`, and the four paths share one `damage`
-  helper so a ray, a sweep and a burst that reach the same body for the same reason report the same number.
+  two gauges, the draw and the aim, and hands the shot to `systems/projectiles.ts`, which owns everything after the
+  trigger — the swept-segment test for a round, the march for a ray and the beam, the arc of a sweep, the jumps of a
+  bolt and the burst of a lobbed shell or a singularity. Damage, falloff, pierce and knockback still all come off the
+  shot's `WeaponDef`, and the seven delivery paths share one `damage` helper so a ray, a sweep and a burst that reach
+  the same body for the same reason report the same number — and each reports it as one `Hit` event, a beam's
+  per-tick cuts included. What keeps hurting a body after the shot is gone is a status, not a shot: `systems/status.ts`
+  owns the burn (one channel per body, applied by a hit, ticked once per tick in the weapon pass) and the armour maths
+  a burn and a beam share.
 - Iteration is by pool index, lowest index first, and randomness only comes from `world.rng`, so the order never
   depends on JS object or Map iteration.
 - One browser frame: `sampler.sample()` → drain accumulator with `step` → `render(alpha = acc/dt)` + `audio.drain()`
@@ -124,7 +128,7 @@ No URL parameter or key jumps to a state purely so it can be photographed; scena
 | Path | Kind | Covers |
 |---|---|---|
 | `tests/unit/*.test.ts` | vitest, `environment: "node"`, no DOM | rng + spatial hash; every weapon kind (spread, pierce, falloff, reload, heat, chain, DoT); every AI behaviour (charger telegraphs before dashing, splitter spawns children, exploder AoE); XP/level-up, powerup tiers capped at 5, dash i-frames; save/load round-trip; same seed + inputs → same `hashWorld`; `purity.test.ts` for the import rule |
-| `tests/e2e/*.spec.ts` | Playwright 1.48.2, Chromium from `/ms-playwright`, flags `--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader` | `campaign.spec.ts` (play → move → kills → level-up → pause/resume, `errors === 0`, then the same pass with `?gl=webgl2` asserting `backend === "webgl2"`), `persistence.spec.ts` (save/reload/resume), `death.spec.ts` (death → summary), `bench.spec.ts` (writes `bench-results.json`, reports only) |
+| `tests/e2e/*.spec.ts` | Playwright 1.48.2, Chromium from `/ms-playwright`, flags `--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader` | `slice.spec.ts` (play → move → kills → level-up → pause/resume, `errors === 0`, then the same pass with `?gl=webgl2` asserting `backend === "webgl2"`), `weapons-a.spec.ts` (the grant path in the live loop for the gun, medieval and instant kinds) and `weapons-b.spec.ts` (the alien kinds plus the heat and charge gauges, read back as `heat` / `venting` / `energy` per hand). Later tasks add `persistence.spec.ts` (save/reload/resume), `death.spec.ts` (death → summary) and `bench.spec.ts` (writes `bench-results.json`, reports only) |
 | `tools/bench.ts` | `tsx`, Node, no renderer | headless sim gate: median ≤4 ms/step at 1,000 enemies over 600 ticks, non-zero exit above that |
 | `tools/replay.ts` | `tsx` | replays a recorded `{seed, inputs}` log and asserts the hash matches |
 | `forge-scenarios.json` | root | the scenario steps and `state` assertions the Playwright specs read. A new mechanic lands with a step or assertion that fails without it |

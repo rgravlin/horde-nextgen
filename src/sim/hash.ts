@@ -85,6 +85,8 @@ export function hashPool(h: number, p: Pool): number {
   h = mixFloats(h, p.life);
   h = mixU16s(h, p.kind);
   h = mixU16s(h, p.state);
+  h = mixFloats(h, p.dotT);
+  h = mixFloats(h, p.dotDps);
   return h;
 }
 
@@ -128,6 +130,10 @@ export function hashWorld(world: World): number {
     h = mixScalar(h, slot.cooldown);
     h = mixScalar(h, slot.reload);
     h = mixScalar(h, slot.charge);
+    h = mixScalar(h, slot.heat);
+    h = fnv32Byte(h, slot.venting ? 1 : 0);
+    h = mixScalar(h, slot.energy);
+    h = mixScalar(h, slot.beam);
   }
   h = fnv32Byte(h, world.activeSlot);
   h = mixU8s(h, world.powerTiers);

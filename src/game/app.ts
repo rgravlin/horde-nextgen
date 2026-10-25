@@ -33,7 +33,7 @@ import { step } from '../sim/step';
 import { spawnEnemy } from '../sim/systems/enemies';
 import { awardXp, choosePick, reroll } from '../sim/systems/pickups';
 import { startWaves } from '../sim/systems/waves';
-import { createWorld, type World } from '../sim/world';
+import { createWorld, loadSlot, type World } from '../sim/world';
 import { createClock, createFrameReport, runFrame } from './loop';
 import type { Hud, HudCommand, HudView } from '../ui/hud';
 
@@ -50,8 +50,14 @@ interface CommandBits {
 export interface ForgeWeapon {
   id: string;
   family: string;
+  /** Rounds in hand; 0 for a weapon that has no magazine. */
   ammo: number;
+  /** Heat on the barrel, 0 to the def's `max`; 0 for a weapon that does not run hot. */
   heat: number;
+  /** Charge in hand, 0 to the def's `capacity`; 0 for a weapon that is not charged. */
+  energy: number;
+  /** The barrel is venting, which is why the hand is not firing. */
+  venting: boolean;
   reloading: boolean;
 }
 
@@ -259,7 +265,18 @@ export function createApp(ports: AppPorts): App {
     for (const hand of w.slots) {
       if (hand.weapon < 0) continue;
       const def = WEAPONS[hand.weapon];
-      weapons.push({ id: def.id, family: def.family, ammo: hand.ammo, heat: 0, reloading: hand.reload > 0 });
+      // Both gauges as they stand rather than as fractions: which of the three things a
+      // hand spends — magazine, heat or charge — is the def's business, and a scenario
+      // that wants a percentage has the ceiling to divide by in the same def.
+      weapons.push({
+        id: def.id,
+        family: def.family,
+        ammo: hand.ammo,
+        heat: hand.heat,
+        energy: hand.energy,
+        venting: hand.venting,
+        reloading: hand.reload > 0,
+      });
     }
 
     const powerups: Array<{ id: string; tier: number }> = [];
@@ -415,11 +432,10 @@ export function createApp(ports: AppPorts): App {
         if (slot < 0) slot = world.activeSlot;
         else switched = true;
         const hand = world.slots[slot];
-        hand.weapon = index;
-        hand.ammo = WEAPONS[index].ammo.mag;
-        hand.reload = 0;
-        hand.cooldown = 0;
-        hand.charge = 0;
+        // One call owns "this hand now holds that gun", including what the gun starts
+        // its magazine, its heat and its charge with — a granted weapon that arrived
+        // half empty would read as a broken grant, not as a spent one.
+        loadSlot(hand, index);
         if (switched) world.activeSlot = slot;
         return true;
       },

@@ -23,7 +23,7 @@ import { WEAPONS, type WeaponDef } from '../../src/content/weapons';
 import { createInputFrame, resetFrame, type InputFrame } from '../../src/sim/input';
 import { step } from '../../src/sim/step';
 import { spawnEnemy } from '../../src/sim/systems/enemies';
-import { Ev, countAlive, countEvents, createWorld, findEvent, type World } from '../../src/sim/world';
+import { Ev, countAlive, countEvents, createWorld, findEvent, loadSlot, type World } from '../../src/sim/world';
 
 /** Put an enemy of the only archetype in content at (x, y) with `hp` health. */
 function place(w: World, x: number, y: number, hp: number): number {
@@ -56,12 +56,7 @@ function arm(w: World, id: string): WeaponDef {
   const index = WEAPONS.findIndex((d) => d.id === id);
   expect(index).toBeGreaterThanOrEqual(0);
   const def = WEAPONS[index];
-  const slot = w.slots[0];
-  slot.weapon = index;
-  slot.ammo = def.ammo.mag;
-  slot.cooldown = 0;
-  slot.reload = 0;
-  slot.charge = 0;
+  loadSlot(w.slots[0], index);
   return def;
 }
 
@@ -92,9 +87,9 @@ function deflections(w: World): number[] {
 describe('weapon data', () => {
   it('carries a family, a mesh and an sfx id, and a delivery path, for every weapon', () => {
     const families = ['guns', 'medieval', 'alien'];
-    // The three kinds still without a path are declared on purpose; nothing in the
-    // table may name one yet, or it would be a gun that silently does not shoot.
-    const delivered = ['projectile', 'hitscan', 'melee', 'arc'];
+    // Every kind the schema declares has a path now, so a new entry naming one of them
+    // shoots. A kind declared without a path would be a gun that silently does not.
+    const delivered = ['projectile', 'hitscan', 'beam', 'arc', 'melee', 'chain', 'orb'];
 
     for (const def of WEAPONS) {
       expect(families, `${def.id} family`).toContain(def.family);
@@ -103,12 +98,28 @@ describe('weapon data', () => {
       expect(delivered, `${def.id} fire kind ${def.fire}`).toContain(def.fire);
       expect(def.dmg).toBeGreaterThan(0);
       expect(def.range).toBeGreaterThan(0);
+      // Exactly one thing a trigger pull spends. A gun with both a magazine and a
+      // charge cell would have to be empty twice before it stopped, and the HUD gauge
+      // would show whichever one it happened to read first.
+      const spends = [def.ammo, def.heat, def.energy].filter((c) => c !== undefined).length;
+      expect(spends, `${def.id} constraint count`).toBe(1);
     }
   });
 
-  it('has the five new weapons alongside the pistol', () => {
+  it('has the six slice weapons, then the four alien ones, in one table', () => {
     const ids = WEAPONS.map((d) => d.id);
-    expect(ids).toEqual(['pistol', 'shotgun', 'sniper', 'longbow', 'flail', 'catapult']);
+    expect(ids).toEqual([
+      'pistol',
+      'shotgun',
+      'sniper',
+      'longbow',
+      'flail',
+      'catapult',
+      'plasmaRepeater',
+      'chainLightningWand',
+      'laserLance',
+      'singularityGun',
+    ]);
 
     const byId = (id: string): WeaponDef => WEAPONS[WEAPONS.findIndex((d) => d.id === id)];
     expect(byId('shotgun').pellets).toBe(8);
@@ -116,8 +127,17 @@ describe('weapon data', () => {
     expect(byId('sniper').pierce).toBe(4); // four pass-throughs, so five bodies
     expect(byId('longbow').family).toBe('medieval');
     expect(byId('longbow').pierce).toBe(2);
+    expect(byId('longbow').dot).toEqual({ dps: 16, seconds: 2.5 });
     expect(byId('flail').fire).toBe('melee');
     expect(byId('catapult').aoe).toBe(3);
+
+    // The alien four: one per family role, and each one's own constraint.
+    for (const id of ['plasmaRepeater', 'chainLightningWand', 'laserLance', 'singularityGun']) {
+      expect(byId(id).family, id).toBe('alien');
+    }
+    expect(byId('chainLightningWand').chain).toBe(5);
+    expect(byId('singularityGun').fire).toBe('orb');
+    expect(byId('singularityGun').pull).toBeGreaterThan(0);
     expect(ENEMIES).toHaveLength(1);
   });
 });
@@ -131,8 +151,9 @@ describe('shotgun (projectile, pellets)', () => {
 
     expect(countAlive(w.shots)).toBe(8);
     expect(countEvents(w, Ev.Shot)).toBe(8);
-    // One shell, eight pellets: the magazine is the volley, not the pellet.
-    expect(w.slots[0].ammo).toBe(def.ammo.mag - 1);
+    // One shell, eight pellets: the magazine is the volley, not the pellet. The
+    // magazine is optional on a def (a heat or charge gun has none), hence the read.
+    expect(w.slots[0].ammo).toBe((def.ammo ? def.ammo.mag : 0) - 1);
 
     const angles = deflections(w);
     expect(angles).toHaveLength(8);

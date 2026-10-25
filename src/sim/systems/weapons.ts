@@ -2,15 +2,17 @@
  * Weapons: the trigger side of combat.
  *
  * One pass owns the whole firing loop — hand swap, cooldown, magazine and reload,
- * the draw, the fire decision and the aim — and hands the delivery to
- * `systems/projectiles.ts`, which owns everything that happens after the trigger:
- * the segment test for a round, the march for a ray, the arc of a sweep and the
- * burst of a lobbed shell.
+ * the draw, the two gauges, the fire decision and the aim — and hands the delivery
+ * to `systems/projectiles.ts`, which owns everything that happens after the
+ * trigger: the segment test for a round, the march for a ray and the beam, the arc
+ * of a sweep, the jumps of a bolt and the burst of a lobbed shell.
  *
- * Four of the seven fire kinds have a delivery path here: `projectile`, `hitscan`,
- * `melee` and `arc`. A weapon naming one the sim does not implement spends no
- * ammo and makes no noise, so a half-finished kind reads as an empty gun rather
- * than as a gun that works badly.
+ * All seven fire kinds have a delivery path. What a hand spends is the other half of
+ * the contract, and each weapon declares exactly one of them (the def's `ammo`,
+ * `heat` or `energy`): a magazine that runs out and reloads, a barrel that cooks
+ * itself into vent, or a charge cell that dribbles until it recovers. There is no
+ * fourth case and no hand that spends two, which is why the three gauges stay
+ * readable on the HUD and in `__forgeState()`.
  *
  * Nothing here allocates: shots come out of the projectile pool, spread comes from
  * world.rng, and the broad phase is the tick's spatial hash.
@@ -20,20 +22,35 @@ import { WEAPONS, type WeaponDef } from '../../content/weapons';
 import type { InputFrame } from '../input';
 import { range } from '../rng';
 import { DT, Ev, TUNE, alloc, pushEvent, type WeaponSlot, type World } from '../world';
-import { castRay, sweepMelee, updateProjectiles } from './projectiles';
+import { castBeam, castChain, castRay, sweepMelee, updateProjectiles } from './projectiles';
+import { tickBurn } from './status';
 
 /** Above this length a direction counts as a real aim vector. */
 const EPS = 1e-6;
 
-/** m — the shortest throw an auto-fired shell gets, so it still has an arc to fall on. */
-const ARC_MIN = 2;
+/** m — the shortest throw an auto-fired lob gets, so it still has a flight to work on. */
+const LOB_MIN = 2;
+
+/**
+ * s between the pings a continuous weapon writes into the event ring.
+ *
+ * This is about the *sound*: a beam that wrote one `Shot` per tick would spend 60 of
+ * the ring's 1024 slots every second it is on, and what it pushed out would be other
+ * weapons' tracers and impacts. Presentation wants "the beam is on, and for how long",
+ * which is what `slot.beam` carries, plus one ping a twelfth of a second to put a
+ * sound on the air. What the beam cuts is a different event and is not throttled —
+ * every `Hit` it lands is reported, the same as a ray's or a sweep's.
+ */
+const BEAM_PING = 0.12;
 
 /**
  * One tick of the weapon loop.
  *
- * Order inside the pass matters: cooldowns, reloads and draws tick down first, so a
- * gun that finished its reload this tick may already fire, and only then do the
- * shots already in the air move.
+ * Order inside the pass matters: cooldowns, reloads, burns and gauges tick down
+ * first, so a gun that finished its reload this tick may already fire; the burns
+ * tick before the shots that might renew them, so a body walked over by a second
+ * arrow keeps one burn rather than getting two; and only then do the shots already in
+ * the air move.
  */
 export function updateWeapons(world: World, frame: InputFrame): void {
   tickWeaponTimers(world);
@@ -46,10 +63,20 @@ export function updateWeapons(world: World, frame: InputFrame): void {
     if (slot !== undefined && def !== undefined) decideFire(world, slot, def, frame);
   }
 
+  tickBurn(world);
   updateProjectiles(world);
 }
 
-/** Tick down both hands, so the off hand is ready when it is swapped to. */
+/**
+ * Tick down both hands, so the off hand is ready when it is swapped to.
+ *
+ * Heat and charge both refill here, on every tick and not only the ones the hand sits
+ * out: a cell that only refills between shots refills slower than the gun drains it,
+ * which reads as a weapon that stops working rather than as one with a rhythm. Venting
+ * needs the second threshold to be state, not arithmetic — cooling alone would let a
+ * hot gun fire the tick it drops a hundredth of a degree, sputter, and heat straight
+ * back up.
+ */
 function tickWeaponTimers(w: World): void {
   for (let i = 0; i < w.slots.length; i++) {
     const slot = w.slots[i];
@@ -62,9 +89,29 @@ function tickWeaponTimers(w: World): void {
       if (slot.reload <= 0) {
         slot.reload = 0;
         slot.charge = 0; // a fresh magazine is a fresh draw
-        const def = WEAPONS[slot.weapon];
-        if (def) slot.ammo = def.ammo.mag;
+        const fresh = WEAPONS[slot.weapon];
+        if (fresh && fresh.ammo) slot.ammo = fresh.ammo.mag;
       }
+    }
+
+    const def = WEAPONS[slot.weapon];
+    if (def === undefined) continue;
+
+    const heat = def.heat;
+    if (heat !== undefined && slot.heat > 0) {
+      slot.heat -= heat.coolPerSec * DT;
+      if (slot.heat <= 0) {
+        slot.heat = 0;
+        slot.venting = false;
+      } else if (slot.venting && slot.heat <= heat.recover) {
+        slot.venting = false;
+      }
+    }
+
+    const energy = def.energy;
+    if (energy !== undefined && slot.energy < energy.capacity) {
+      slot.energy += energy.regenPerSec * DT;
+      if (slot.energy > energy.capacity) slot.energy = energy.capacity;
     }
   }
 }
@@ -79,6 +126,9 @@ function swapWeapon(w: World): void {
   if (other && other.weapon >= 0) {
     w.activeSlot = next;
     other.charge = 0;
+    // The beam clock is per hand and per trigger pull: a fresh hand starts a fresh
+    // sound rather than continuing the one it was swapped away from.
+    other.beam = 0;
   }
 }
 
@@ -109,6 +159,7 @@ function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFram
 
   if (!want) {
     if (charge && slot.charge > 0) fire(w, slot, def, false);
+    slot.beam = 0;
     return;
   }
 
@@ -135,22 +186,41 @@ function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFram
  * leave the setting looking broken.
  *
  * Leading matters most for a lobbed shell, which is why the `arc` branch does not
- * merely point at the nearest body — see the comment there.
+ * merely point at the nearest body — see the comment there. A singularity is pointed
+ * and not led, for the opposite reason, also below.
  *
  * A shot that could not be created — the projectile pool is full — spends neither
- * ammo nor cooldown, so a jammed pool never quietly eats a round.
+ * ammo nor cooldown, so a jammed pool never quietly eats a round. The same goes for a
+ * hand that cannot spend: venting, out of charge or out of ammo, it does not tick, and
+ * a chain bolt that found nobody spends its charge too.
+ *
+ * The three paths added on top of a round aim differently. A beam and a bolt resolve
+ * the tick they are called and need only a direction; a singularity is deliberately
+ * *not* led, because it pops where it got to rather than where it was aimed, and its
+ * job is to gather the crowd that is about to be there.
  */
 function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean): void {
-  if (slot.reload > 0 || slot.cooldown > 0 || slot.ammo <= 0) return;
-  if (def.fire === 'beam' || def.fire === 'chain' || def.fire === 'orb') return;
+  const cost = def.energy ? def.energy.perShot : 0;
+  if (slot.reload > 0 || slot.cooldown > 0 || slot.venting) {
+    slot.beam = 0;
+    return;
+  }
+  if (def.ammo && slot.ammo <= 0) {
+    slot.beam = 0;
+    return;
+  }
+  if (cost > 0 && slot.energy < cost) {
+    slot.beam = 0;
+    return;
+  }
 
   const player = w.player;
   const enemies = w.enemies;
   const muzzle = TUNE.playerRadius + TUNE.shotStart;
   let ax = player.aimX;
   let ay = player.aimY;
-  // How far down that line a lobbed shell goes: the weapon's full range, unless
-  // auto-fire has found a body to spend the throw on.
+  // How far down that line a lob goes: the weapon's full range, unless auto-fire has
+  // found a body to spend the throw on.
   let lob = def.range;
 
   if (auto && w.nearest >= 0) {
@@ -163,20 +233,26 @@ function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean): void {
       // Lead it, and shorten the throw to match. A shell is airborne for up to
       // `range / speed` seconds and a chaser covers 4 m in that time, so a burst
       // aimed at the body's own footprint lands a whole flight behind the crowd it
-      // was fired at — which for the only area weapon in the game means it never hits
-      // anything. The lead time is the flight a throw as far as the body takes, so
-      // the aim is out by the second pass rather than by the whole flight, well inside
-      // the burst radius. A body closer than ARC_MIN gets an ARC_MIN throw instead, so
-      // the shell keeps an arc rather than detonating on the player's boots.
+      // was fired at — which for an area weapon means it never hits anything. The lead
+      // time is the flight a throw as far as the body takes, so the aim is out by the
+      // second pass rather than by the whole flight, well inside the burst radius. A
+      // body closer than LOB_MIN gets a LOB_MIN throw instead, so the shell keeps a
+      // flight rather than detonating on the player's boots.
       const flight = (Math.sqrt(tx * tx + ty * ty) - muzzle) / def.speed;
       if (flight > 0) {
         lx = tx + enemies.vx[target] * flight;
         ly = ty + enemies.vy[target] * flight;
         const led = Math.sqrt(lx * lx + ly * ly);
-        lob = led > def.range ? def.range : led < ARC_MIN ? ARC_MIN : led;
+        lob = led > def.range ? def.range : led < LOB_MIN ? LOB_MIN : led;
       } else {
-        lob = ARC_MIN;
+        lob = LOB_MIN;
       }
+    } else if (def.fire === 'orb') {
+      // No lead, on purpose and not for want of the maths: a singularity drags what is
+      // already in its radius and pops where it arrives, so chasing a body that has not
+      // got there yet spends the whole 1.3 s of flight on empty floor.
+      const near = Math.sqrt(tx * tx + ty * ty) - muzzle;
+      lob = near > def.range ? def.range : near < LOB_MIN ? LOB_MIN : near;
     }
     const len = Math.sqrt(lx * lx + ly * ly);
     if (len > EPS) {
@@ -205,16 +281,17 @@ function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean): void {
     speed *= 1 + (charge.speed - 1) * drawn;
   }
 
+  // The ray and the bolt start at the same distance downrange as a round would, so a
+  // body pressed against the player is still ahead of them and still reachable.
+  const ox = player.x + ax * muzzle;
+  const oy = player.y + ay * muzzle;
+
   let spent = false;
   if (def.fire === 'projectile') {
     spent = launchShots(w, slot, def, ax, ay, dmg, speed);
-  } else if (def.fire === 'arc') {
-    spent = launchShell(w, slot, def, ax, ay, dmg, lob);
+  } else if (def.fire === 'arc' || def.fire === 'orb') {
+    spent = launchLob(w, slot, def, ax, ay, dmg, lob);
   } else if (def.fire === 'hitscan') {
-    // The ray starts at the same distance downrange as a round would, so a body
-    // pressed against the player is still ahead of it and still reachable.
-    const ox = player.x + ax * muzzle;
-    const oy = player.y + ay * muzzle;
     // `a` is the weapon index and `b` is -1 because an instant shot has no entity
     // to point at: the tracer is drawn from the muzzle to the impact it reports.
     pushEvent(w, Ev.Shot, slot.weapon, -1, ox, oy);
@@ -224,14 +301,52 @@ function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean): void {
     pushEvent(w, Ev.Shot, slot.weapon, -1, player.x, player.y);
     sweepMelee(w, def, player.x, player.y, ax, ay);
     spent = true;
+  } else if (def.fire === 'beam') {
+    // One ping per BEAM_PING of continuous fire rather than one per tick, and
+    // `slot.beam` says how long the beam has been on — see the constant.
+    const before = slot.beam;
+    slot.beam = before + DT;
+    if (before === 0 || Math.floor(slot.beam / BEAM_PING) > Math.floor(before / BEAM_PING)) {
+      pushEvent(w, Ev.Shot, slot.weapon, -1, ox, oy);
+    }
+    castBeam(w, def, ox, oy, ax, ay);
+    spent = true;
+  } else if (def.fire === 'chain') {
+    const links = castChain(w, def, ox, oy);
+    // Nothing in front of the muzzle: the bolt was never thrown. A flash here would be
+    // a sound about nothing, and the charge stays in the cell for the next one.
+    if (links > 0) {
+      pushEvent(w, Ev.Shot, slot.weapon, -1, ox, oy);
+      spent = true;
+    }
   }
 
-  if (!spent) return;
+  if (!spent) {
+    slot.beam = 0;
+    return;
+  }
 
-  slot.ammo--;
-  slot.cooldown = 1 / (def.rate * w.stats.fireRate);
+  // Only now is the pull paid for, so nothing charges the player for a shot that did
+  // not happen. A magazine hands itself a reload the moment it empties; a barrel and a
+  // cell have no such pause, they just have less of whatever they run on.
+  const magazine = def.ammo;
+  if (magazine) {
+    slot.ammo--;
+    if (slot.ammo <= 0) slot.reload = magazine.reload;
+  }
+  if (cost > 0) slot.energy -= cost;
+
+  const heat = def.heat;
+  if (heat) {
+    const hot = slot.heat + heat.perShot;
+    slot.heat = hot > heat.max ? heat.max : hot;
+    if (slot.heat >= heat.max) slot.venting = true;
+  }
+
+  // A beam has no gap between pulls — that is what makes it a beam, and why its rate is
+  // 0 — so it buys no cooldown and gates on heat alone.
+  if (def.rate > 0) slot.cooldown = 1 / (def.rate * w.stats.fireRate);
   if (slot.charge > 0) slot.charge = 0;
-  if (slot.ammo <= 0) slot.reload = def.ammo.reload;
 }
 
 /**
@@ -291,17 +406,19 @@ function launchShots(
 }
 
 /**
- * Lob a shell.
+ * Throw something that resolves at the end of its flight: the catapult's shell, or a
+ * singularity.
  *
- * The shot carries no hit budget (`state` 0) because a shell is not a bullet: it
- * flies over whatever is under it and detonates at the end of its flight. The aim
+ * The shot carries no hit budget (`state` 0) because neither is a bullet: it flies over
+ * whatever is under it and detonates at the end of its flight, a singularity dragging
+ * on the way (see `updateProjectiles`). The aim
  * that reaches the sim is a direction, not a point (`InputFrame` carries
  * `aimX/aimY`), so `distance` says how far down that line the burst goes — the
- * weapon's range for a steered shot, the lead point for an auto-fired one — and the
- * flight time falls out of it. `life` *is* that timer: when it runs out the burst
- * happens where the shell got to, within one step of `distance`.
+ * weapon's range for a steered shot, the body's own distance for an auto-fired one —
+ * and the flight time falls out of it. `life` *is* that timer: when it runs out the
+ * burst happens where the shot got to, within one step of `distance`.
  */
-function launchShell(
+function launchLob(
   w: World,
   slot: WeaponSlot,
   def: WeaponDef,

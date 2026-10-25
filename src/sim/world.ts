@@ -131,6 +131,14 @@ export interface Pool {
   /** Behaviour state-machine slot: stagger ticks for enemies, shots a
    * projectile may still land. */
   readonly state: Uint16Array;
+  /**
+   * Burn, for the enemy pool only: seconds of damage-over-time left on the body, and
+   * what it costs per second. Written by a weapon hit carrying a `dot`, ticked by the
+   * projectile pass, and cleared with the rest of the slot — so a body that dies of
+   * its burns cannot pass them to whatever takes the slot next.
+   */
+  readonly dotT: Float32Array;
+  readonly dotDps: Float32Array;
 }
 
 /** Circular event buffer, oldest first, dropping the oldest on overflow. */
@@ -177,12 +185,16 @@ export interface Player {
 /**
  * One weapon hand. Ammo is a count rather than a pool because a magazine is
  * small and the HUD reads it directly.
+ *
+ * A hand spends exactly one of `ammo`, `heat` or `energy` per trigger pull, which
+ * is what the def declares; the two gauges only mean anything on the hand that owns
+ * them, and both refill on the ticks the hand does not spend them.
  */
 export interface WeaponSlot {
   /** Index into the WEAPONS table; -1 is an empty hand. */
   weapon: number;
   ammo: number;
-  /** Seconds until this hand may fire again. */
+  /** Seconds until this hand may fire again. 0 on a `beam`, which has no gap. */
   cooldown: number;
   /** Seconds of reload left. Above 0 the hand cannot fire. */
   reload: number;
@@ -191,6 +203,22 @@ export interface WeaponSlot {
    * the shot is loosed. Zero on every hand that does not charge.
    */
   charge: number;
+  /** Heat on the barrel, 0 to the def's `max`. Cools every tick, firing or not. */
+  heat: number;
+  /**
+   * True from the moment the barrel reaches `max` until it has cooled back to the
+   * def's `recover`. Kept as state rather than derived from `heat` because the two
+   * thresholds are what stop a hot gun from sputtering one shot per tick.
+   */
+  venting: boolean;
+  /** Charge left on an energy hand, 0 to the def's `capacity`. */
+  energy: number;
+  /**
+   * Seconds a `beam` has been on this hand, reset the moment it stops. The renderer
+   * and the audio ping off it, so a continuous weapon stays one event every 0.12 s
+   * instead of one every tick.
+   */
+  beam: number;
 }
 
 /** Timer-driven spawn state for the current chapter. */
@@ -294,6 +322,11 @@ export function createPool(name: string, cap: number): Pool {
     life: new Float32Array(cap),
     kind: new Uint16Array(cap),
     state: new Uint16Array(cap),
+    // Only the enemy pool ever writes these two (see Pool), but they are allocated
+    // everywhere so `alloc` can hand back a cleared slot without knowing what kind
+    // of pool it is: 16 KB of quiet memory for that invariant to hold.
+    dotT: new Float32Array(cap),
+    dotDps: new Float32Array(cap),
   };
 }
 
@@ -312,6 +345,8 @@ export function alloc(p: Pool): number {
   p.life[i] = 0;
   p.kind[i] = 0;
   p.state[i] = 0;
+  p.dotT[i] = 0;
+  p.dotDps[i] = 0;
   return i;
 }
 
@@ -329,10 +364,44 @@ export function countAlive(p: Pool): number {
   return n;
 }
 
-/** A hand holding `weaponIndex`, loaded when there is a gun to load. */
+/** A hand holding `weaponIndex`, loaded by `loadSlot`. */
 function createSlot(weaponIndex: number): WeaponSlot {
-  const mag = weaponIndex >= 0 ? WEAPONS[weaponIndex].ammo.mag : 0;
-  return { weapon: weaponIndex, ammo: mag, cooldown: 0, reload: 0, charge: 0 };
+  const slot: WeaponSlot = {
+    weapon: -1,
+    ammo: 0,
+    cooldown: 0,
+    reload: 0,
+    charge: 0,
+    heat: 0,
+    venting: false,
+    energy: 0,
+    beam: 0,
+  };
+  loadSlot(slot, weaponIndex);
+  return slot;
+}
+
+/**
+ * Put `weaponIndex` in `slot` and give it what the gun starts with, in place.
+ *
+ * One function owns "a hand is loaded", because three things need it to mean the same
+ * thing: the two hands a World starts with, a chest or a level-up handing over a gun
+ * (`__forgeDebug.giveWeapon`), and a test that wants to be about a weapon rather than
+ * about how weapons arrive. A hand that spends charge starts with a full one and a
+ * hand that spends heat starts cold, because a gun picked up empty reads as broken
+ * rather than as balanced.
+ */
+export function loadSlot(slot: WeaponSlot, weaponIndex: number): void {
+  const def = weaponIndex >= 0 ? WEAPONS[weaponIndex] : undefined;
+  slot.weapon = weaponIndex;
+  slot.ammo = def && def.ammo ? def.ammo.mag : 0;
+  slot.energy = def && def.energy ? def.energy.capacity : 0;
+  slot.heat = 0;
+  slot.venting = false;
+  slot.cooldown = 0;
+  slot.reload = 0;
+  slot.charge = 0;
+  slot.beam = 0;
 }
 
 export function createWorld(seed: number, opts: WorldOptions = {}): World {
