@@ -31,7 +31,7 @@ outside `src/sim` may decide gameplay outcomes.
 | `src/audio/` | `synth.ts` (WebAudio graph), `songs.ts`, `sfx.ts` (event id → voice) | read-only `sim` events; no engine import |
 | `src/ui/` | `hud.ts`, `menus.ts` (DOM overlay), `theme.css` (DESIGN.md palette/type scale) | read-only `sim`/`game` state; no engine import |
 | `src/input/` | `sampler.ts` (keyboard + mouse → `InputFrame`), `gamepad.ts`, `bindings.ts` (default map, remappable) | `sim` types only |
-| `src/game/` | `app.ts` (scene state machine), `loop.ts` (fixed-step accumulator), `persist.ts` (save/load), `debugState.ts` (`__forgeState`) | `sim`, `content`, `input`, and the render/audio/ui modules |
+| `src/game/` | `app.ts` (scene state machine), `loop.ts` (fixed-step accumulator), `persistence.ts` (the three storage slots: run, settings, meta; plus the autosave clock), `debugState.ts` (`__forgeState`) | `sim`, `content`, `input`, and the render/audio/ui modules |
 | `src/main.ts` | composition root: build the `World`, the renderer, audio, UI and input, register `window.__forgeState` / `window.__forgeDebug` | everything |
 
 Hard rules, checked in CI:
@@ -116,14 +116,18 @@ they came from and return there. `settings`/`history` are reachable from both `m
 | Key | Contents | Written |
 |---|---|---|
 | `neonhorde.save.v1` | resumable run snapshot: `seed`, `chapter`, `tick`, wave progress, player, weapon slots, powerups, score, kills — plus the five pools and the floor, byte for byte | autosave every 30 s, on pause, at each chapter end |
-| `neonhorde.settings.v1` | master/sfx/music volume, quality tier, resolution scale, auto-fire, dash keybind map, shake amount | on change |
-| `neonhorde.meta.v1` | unlocked chapters, best score per chapter, run-history rows for the history screen | when a run ends |
+| `neonhorde.settings.v1` | master/sfx/music volume, quality tier (`auto`/low/med/high), resolution scale, auto-fire, shake amount | on change |
+| `neonhorde.meta.v1` | unlocked chapters, best *time* per chapter (`-1` = never cleared), run-history rows for the history screen (last 50: date, chapter, time, kills, score, weapon ids) | when a run ends |
 
 `serialize(world)` in `src/sim/serialize.ts` only produces and consumes the snapshot object; the localStorage read
-and write happen in `src/game/persist.ts` through the `StorageLike` port. A `v1` payload that fails to parse or
-shape-check is discarded (`deserialize` returns `null`, never throws) and counted in `errors`, never fatal.
+and write happen in `src/game/persistence.ts` through the `StorageLike` port (`{getItem, setItem, removeItem}`, so a
+unit test hands it a `Map`). A `v1` payload that fails to parse or shape-check is discarded (`deserialize` returns
+`null`, never throws) and counted through the module's `ProblemSink`, which is what feeds `errors` — never fatal,
+never silent. Absence is not a problem: no key, or an empty one, is a first launch and reads back as the defaults.
+Key remapping is deliberately not in the settings payload yet; the bind map belongs to `src/input/bindings.ts` when
+remapping lands, so that there is one table and the sampler reads it.
 
-Two things about the shape are load-bearing, so they are recorded here rather than only in the code:
+Three points below are load-bearing rather than incidental, so they are recorded here rather than only in the code:
 
 - **Pools travel as bytes, not as JSON numbers.** `hashWorld` folds whole typed arrays, and `alloc` clears a slot
   on the way *in*, so a dead slot still carries the body that died in it and the free stack's order decides where
@@ -135,6 +139,11 @@ Two things about the shape are load-bearing, so they are recorded here rather th
   per tick plus its aim pair, and `playReplay` rebuilds the run by stepping it, which is what keeps a chapter at
   tens of kilobytes and lets a changed build be diffed against a recorded run by hash. It assumes default pool
   sizes; a save carries its own.
+- **The autosave clock counts play seconds.** `AutosaveTimer` in `persistence.ts` is fed `world.time`, which only
+  moves while the sim steps, so a pause, a level-up freeze and a frame that ran out of its step cap all hold the
+  interval still — a wall-clock timer would spend a long pause writing saves and call that autosave. It reports due
+  every 30 s and at a chapter's end, keyed by *which* chapter ended, because the intermission is 4 s and the
+  interval is 30: a chapter can end inside the gap its predecessor opened.
 
 ## State for checks
 
@@ -148,7 +157,7 @@ No URL parameter or key jumps to a state purely so it can be photographed; scena
 
 | Path | Kind | Covers |
 |---|---|---|
-| `tests/unit/*.test.ts` | vitest, `environment: "node"`, no DOM | rng + spatial hash; every weapon kind (spread, pierce, falloff, reload, heat, chain, DoT); every AI behaviour (the melee five in `enemies-a.test.ts` — charger telegraphs before dashing, splitter spawns children, exploder AoE — and the ranged trio in `enemies-b.test.ts`: shooter band and 24-tick flash, grenade burst at its telegraphed ring, healer pulse, plus the enemy-round pool's i-frame gate); XP/level-up, powerup tiers capped at 5, dash i-frames; the chapter arc and its cover (`obstacles.test.ts`); the wave script (`waves.test.ts`: a scripted pack lands at its second and at no second before, nothing comes down inside cover or inside the 32×18 m view rect over all ten layouts, and the chapter's `hp` scale reaches the bodies); save/load round-trip; same seed + inputs → same `hashWorld`; `purity.test.ts` for the import rule |
+| `tests/unit/*.test.ts` | vitest, `environment: "node"`, no DOM | rng + spatial hash; every weapon kind (spread, pierce, falloff, reload, heat, chain, DoT); every AI behaviour (the melee five in `enemies-a.test.ts` — charger telegraphs before dashing, splitter spawns children, exploder AoE — and the ranged trio in `enemies-b.test.ts`: shooter band and 24-tick flash, grenade burst at its telegraphed ring, healer pulse, plus the enemy-round pool's i-frame gate); XP/level-up, powerup tiers capped at 5, dash i-frames; the chapter arc and its cover (`obstacles.test.ts`); the wave script (`waves.test.ts`: a scripted pack lands at its second and at no second before, nothing comes down inside cover or inside the 32×18 m view rect over all ten layouts, and the chapter's `hp` scale reaches the bodies); save/load round-trip; same seed + inputs → same `hashWorld`; the storage layer against a `Map` fake and a fake that throws (`persistence.test.ts`: the three keys, corrupt and partial payloads, the 50-row history cap, chapter unlocks, the autosave interval measured in play seconds); `purity.test.ts` for the import rule |
 | `tests/e2e/*.spec.ts` | Playwright 1.48.2, Chromium from `/ms-playwright`, flags `--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader` | `slice.spec.ts` (play → move → kills → level-up → pause/resume, `errors === 0`, then the same pass with `?gl=webgl2` asserting `backend === "webgl2"`), `weapons-a.spec.ts` (the grant path in the live loop for the gun, medieval and instant kinds) and `weapons-b.spec.ts` (the alien kinds plus the heat and charge gauges, read back as `heat` / `venting` / `energy` per hand), and the enemies spec pins the melee five through the live loop (`enemies-a.spec.ts`, which spawns rings of bodies through `__forgeDebug.spawn` and lets the real damage pass prove the splitter's split). Later tasks add `persistence.spec.ts` (save/reload/resume), `death.spec.ts` (death → summary) and `bench.spec.ts` (writes `bench-results.json`, reports only) |
 | `tools/bench.ts` | `tsx`, Node, no renderer | headless sim gate: median ≤4 ms/step at 1,000 enemies over 600 ticks, non-zero exit above that |
 | `tools/replay.ts` | `tsx` | replays a recorded `{seed, inputs}` log and asserts the hash matches |

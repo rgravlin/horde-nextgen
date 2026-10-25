@@ -1,7 +1,7 @@
 /**
  * Save and restore: the whole World as one JSON-safe object.
  *
- * This is half of the persistence feature; the other half (`src/game/persist.ts`) owns
+ * This is half of the persistence feature; the other half (`src/game/persistence.ts`) owns
  * the localStorage read and write through the `StorageLike` port. Nothing here touches
  * storage, a clock or the DOM: `serialize` turns a World into plain JSON and
  * `deserialize` builds a World from plain JSON, so a unit test in Node and the game in a
