@@ -1,6 +1,18 @@
-// Composition root. This task is the scaffold only: the fonts load here and a
-// placeholder proves the canvas container and the #ui overlay mount. The
-// renderer, audio, HUD and input wire up here in later tasks (ARCHITECTURE.md).
+/**
+ * The composition root: the browser-only wiring that turns the pieces into a game.
+ *
+ * It builds the renderer (best-effort), the DOM overlay and the game shell, then
+ * drives them from one requestAnimationFrame loop. Everything decision-shaped lives
+ * in `src/game` and `src/sim`; this file only plugs them together and exposes the
+ * two check hooks the browser scenarios read (TECH.md "State for checks").
+ *
+ * The renderer is optional by design. If `renderer.init()` fails — a machine with
+ * neither WebGPU nor WebGL2 — the shell still runs the simulation with `view: null`
+ * and a panel explains why nothing is drawn, rather than the page dying on a black
+ * canvas. A scenario checks `__forgeState()`, not pixels, so a headless box still
+ * exercises the game.
+ */
+
 import '@fontsource/chakra-petch/600.css';
 import '@fontsource/chakra-petch/700.css';
 import '@fontsource/ibm-plex-mono/400.css';
@@ -8,11 +20,129 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
-const ui = document.getElementById('ui');
+import { createApp, type App, type ForgeState } from './game/app';
+import { createView, type View } from './render/renderer';
+import { createHud } from './ui/hud';
 
-if (ui) {
-  const note = document.createElement('p');
-  note.className = 'placeholder';
-  note.textContent = 'Neon Horde — scaffold, no renderer yet';
-  ui.appendChild(note);
+/** `?seed=N` for a reproducible run; `?gl=webgl2` to force the WebGL2 backend. */
+function readParams(): { seed: number; forceWebGL: boolean } {
+  let seed = 1;
+  let forceWebGL = false;
+  try {
+    const params = new URLSearchParams(location.search);
+    const raw = params.get('seed');
+    if (raw) {
+      const parsed = Number(raw);
+      if (Number.isFinite(parsed) && parsed > 0) seed = parsed >>> 0;
+    }
+    forceWebGL = params.get('gl') === 'webgl2';
+  } catch {
+    // A missing location (a non-browser import) keeps the defaults.
+  }
+  return { seed, forceWebGL };
 }
+
+/** The menu state served before the app exists, so `__forgeState` is never absent. */
+function idleState(backend: ForgeState['backend']): ForgeState {
+  return {
+    scene: 'menu',
+    backend,
+    tick: 0,
+    chapter: 0,
+    mode: 'campaign',
+    player: {
+      x: 0,
+      y: 0,
+      hp: 100,
+      maxHp: 100,
+      shield: 0,
+      level: 1,
+      xp: 0,
+      dashReady: true,
+      alive: true,
+    },
+    wave: { index: 1, timeLeft: 0, bossAlive: false },
+    score: 0,
+    kills: 0,
+    enemies: { count: 0, byType: {}, nearest: [] },
+    weapons: [],
+    activeWeapon: '',
+    powerups: [],
+    levelUpChoices: [],
+    fps: 0,
+    errors: 0,
+  };
+}
+
+/** The "needs WebGL2" panel: the one failure that is worth showing the player. */
+function showNoGpuPanel(root: HTMLElement, message: string): void {
+  const panel = document.createElement('div');
+  panel.className = 'no-gpu';
+  panel.textContent = `Your browser can't run this (needs WebGL2). ${message}`;
+  root.appendChild(panel);
+}
+
+async function boot(): Promise<void> {
+  const canvas = document.getElementById('gl') as HTMLCanvasElement | null;
+  const ui = document.getElementById('ui');
+  const { seed, forceWebGL } = readParams();
+
+  // The state hook is registered before anything is awaited, so `window.__forgeState`
+  // is never absent — not while the renderer is still coming up, and not on a box
+  // with no backend at all. It reads these two through the closure, so nothing has to
+  // be re-pointed once the game exists.
+  let backend: ForgeState['backend'] = 'none';
+  let app: App | null = null;
+  const w = window as unknown as {
+    __forgeState?: () => ForgeState;
+    __forgeDebug?: App['debug'];
+  };
+  w.__forgeState = () => (app ? app.state() : idleState(backend));
+
+  // Errors are counted, never swallowed: an uncaught exception or a dropped promise
+  // lands in `errors`, where the scenarios can see it (AGENTS.md).
+  const noteError = (): void => {
+    app?.noteError();
+  };
+  window.addEventListener('error', noteError);
+  window.addEventListener('unhandledrejection', noteError);
+
+  // The simulation waits for the renderer to resolve before it is built, so the
+  // fixed-step clock's first frame is the first real frame: no time is banked while
+  // `init()` runs, and a run's play time tracks real time from the first tick.
+  let view: View | null = null;
+  if (canvas) {
+    try {
+      const result = await createView(canvas, { forceWebGL });
+      if (result.ok) view = result.view;
+      else if (ui) showNoGpuPanel(ui, result.message);
+    } catch (error) {
+      if (ui) showNoGpuPanel(ui, String(error));
+    }
+  }
+  backend = view ? view.backend : 'none';
+
+  const hud = ui ? createHud(ui) : null;
+  app = createApp({ view, hud, seed, backend });
+  w.__forgeDebug = app.debug;
+
+  if (view) {
+    view.resize();
+    window.addEventListener('resize', () => view?.resize());
+  }
+
+  const frame = (now: number): void => {
+    try {
+      app?.advance(now);
+    } catch (error) {
+      // A renderer that throws every frame would otherwise spam an uncaught error;
+      // count it and keep the loop alive so the run is still inspectable.
+      app?.noteError();
+      console.error(error);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+}
+
+void boot();

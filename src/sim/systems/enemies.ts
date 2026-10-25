@@ -50,15 +50,16 @@ export function spawnEnemy(w: World, def: number, x: number, y: number): number 
 /**
  * Run every live enemy's behaviour, then let it hit the player.
  *
- * Also leaves `enemyNear` behind: the closest enemy distance measured before
- * anything moved, which is what the auto-fire decision reads. Enemies already at
- * 0 HP are skipped — the damage pass that killed them has already dropped their
- * shard and given the slot back.
+ * Also leaves `enemyNear` and `nearest` behind: the closest enemy measured before
+ * anything moved, which is what the auto-fire decision reads and where it points.
+ * Enemies already at 0 HP are skipped — the damage pass that killed them has
+ * already dropped their shard and given the slot back.
  */
 export function updateEnemies(w: World): void {
   const enemies = w.enemies;
   const player = w.player;
   let nearest2 = Infinity;
+  let nearestSlot = -1;
 
   for (let i = 0; i < enemies.cap; i++) {
     if (enemies.alive[i] === 0) continue;
@@ -67,14 +68,23 @@ export function updateEnemies(w: World): void {
     const dx = player.x - enemies.x[i];
     const dy = player.y - enemies.y[i];
     const d2 = dx * dx + dy * dy;
-    if (d2 < nearest2) nearest2 = d2;
+    if (d2 < nearest2) {
+      nearest2 = d2;
+      nearestSlot = i;
+    }
 
     const def = ENEMIES[enemies.kind[i]];
     AI[def.ai](w, i);
     contact(w, def, d2);
   }
 
-  w.enemyNear = nearest2 === Infinity ? Infinity : Math.sqrt(nearest2);
+  if (nearestSlot === -1) {
+    w.enemyNear = Infinity;
+    w.nearest = -1;
+  } else {
+    w.enemyNear = Math.sqrt(nearest2);
+    w.nearest = nearestSlot;
+  }
 }
 
 /**

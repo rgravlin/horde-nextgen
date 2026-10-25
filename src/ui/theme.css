@@ -1,0 +1,469 @@
+/*
+ * HUD stylesheet: the palette and type scale from DESIGN.md, nothing else.
+ *
+ * Rules the brief pins and this file keeps to: panels are dark translucent glass
+ * with a 1px Alien Cyan hairline and cut corners, no CSS glow and no blur stacks
+ * (glow is the bloom's job), two font families only, tabular numerals so the
+ * counters do not jitter, 24px of safe margin, and the middle of the screen left
+ * clear. Threat Red stays unused here: it belongs to telegraphs.
+ *
+ * The scene rules at the bottom are the only state in this file: `#ui` carries
+ * `data-scene`, so switching screens is one attribute write per change.
+ */
+
+#ui {
+  --void: rgba(11, 13, 20, 0.72);
+  --hairline: rgba(46, 242, 255, 0.34);
+  --text: #e8ecf5;
+  --dim-text: #8c93a6;
+  --cyan: #2ef2ff;
+  --violet: #9b5cff;
+  --magenta: #ff2e97;
+  --orange: #ff7a1a;
+  --hazard: #f2b233;
+  --heal: #3dff8a;
+  --margin: 24px;
+  --cut: 6px;
+
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 14px;
+  color: var(--text);
+  /* The overlay is a full-screen layer over the canvas. Clipping (and no sideways
+     scroll) is a hard requirement for the smoke layout check; pointer events pass
+     through to the canvas except on the controls that opt back in. */
+  overflow: hidden;
+  pointer-events: none;
+}
+
+#ui .panel,
+#ui .card,
+#ui .btn,
+#ui .slot,
+#ui .power {
+  background: var(--void);
+  border: 1px solid var(--hairline);
+  clip-path: polygon(
+    var(--cut) 0,
+    100% 0,
+    100% calc(100% - var(--cut)),
+    calc(100% - var(--cut)) 100%,
+    0 100%,
+    0 var(--cut)
+  );
+}
+
+#ui .hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-out;
+}
+
+#ui .num,
+#ui .slot-ammo,
+#ui .card-stats,
+#ui .stats {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Top centre: the chapter and the wave clock. */
+#ui .wave {
+  position: absolute;
+  top: var(--margin);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+}
+
+#ui .wave-label {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+#ui .bar {
+  position: relative;
+  width: 160px;
+  height: 3px;
+  background: rgba(232, 236, 245, 0.12);
+  overflow: hidden;
+}
+
+#ui .fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  height: 100%;
+  width: 0;
+}
+
+#ui .fill.warn {
+  background: var(--hazard);
+}
+
+/* Top right: score and kills. */
+#ui .score {
+  position: absolute;
+  top: var(--margin);
+  right: var(--margin);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 8px 12px;
+  text-align: right;
+}
+
+#ui .score .label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+}
+
+#ui .score .num {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+#ui .score .num + .label {
+  color: var(--magenta);
+}
+
+/* Bottom left: HP, shield and the dash pip. Slim, and never centred. */
+#ui .vitals {
+  position: absolute;
+  bottom: calc(var(--margin) + 8px);
+  left: var(--margin);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ui .hp {
+  position: relative;
+  width: 240px;
+  height: 10px;
+  background: rgba(232, 236, 245, 0.1);
+}
+
+#ui .fill.hp-fill {
+  background: var(--heal);
+}
+
+#ui .fill.shield-fill {
+  background: var(--cyan);
+  opacity: 0.85;
+}
+
+#ui .vitals .pip {
+  width: 8px;
+  height: 8px;
+  background: rgba(232, 236, 245, 0.18);
+}
+
+#ui .vitals .pip.ready {
+  background: var(--cyan);
+}
+
+/* Bottom right: the two hands, the active one brighter. */
+#ui .slots {
+  position: absolute;
+  right: var(--margin);
+  bottom: calc(var(--margin) + 8px);
+  display: flex;
+  gap: 8px;
+}
+
+#ui .slot {
+  width: 152px;
+  padding: 6px 8px;
+  opacity: 0.5;
+}
+
+#ui .slot.active {
+  opacity: 1;
+  border-color: var(--orange);
+}
+
+#ui .slot-name {
+  display: block;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#ui .slot-ammo {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 13px;
+  color: var(--dim-text);
+}
+
+#ui .slot.reloading .slot-ammo {
+  color: var(--hazard);
+}
+
+#ui .slot .bar {
+  width: 100%;
+}
+
+#ui .fill.ammo-fill {
+  background: var(--orange);
+}
+
+/* Right edge: power-ups with tier pips. */
+#ui .powers {
+  position: absolute;
+  top: 50%;
+  right: var(--margin);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  transform: translateY(-50%);
+}
+
+#ui .power {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+#ui .power-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+}
+
+#ui .pips {
+  display: flex;
+  gap: 3px;
+}
+
+#ui .pip {
+  width: 6px;
+  height: 6px;
+  background: rgba(232, 236, 245, 0.16);
+}
+
+#ui .pip.on {
+  background: var(--magenta);
+}
+
+/* The very bottom edge: XP, 4px, full width. */
+#ui .xp {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  background: rgba(155, 92, 255, 0.16);
+}
+
+#ui .fill.xp-fill {
+  background: var(--violet);
+}
+
+/* Screens. Everything outside the corners is one screen at a time. */
+#ui .menu,
+#ui .pause,
+#ui .summary {
+  position: absolute;
+  top: 22%;
+  left: var(--margin);
+  display: none;
+  width: min(380px, calc(100vw - 2 * var(--margin)));
+  padding: 20px;
+  pointer-events: auto;
+}
+
+#ui .title {
+  margin: 0 0 4px;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#ui .title::after {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 2px;
+  margin-top: 10px;
+  background: linear-gradient(90deg, var(--magenta), var(--cyan));
+}
+
+#ui .subtitle {
+  margin: 14px 0 20px;
+  color: var(--dim-text);
+}
+
+#ui .head {
+  margin: 0 0 8px;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#ui .hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--dim-text);
+}
+
+#ui .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+#ui .btn {
+  padding: 10px 16px;
+  color: var(--text);
+  font: inherit;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#ui .btn:hover {
+  border-color: var(--cyan);
+}
+
+#ui .btn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#ui .stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+
+#ui .stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#ui .stat .key {
+  color: var(--dim-text);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* Level-up: the playfield dims behind the cards. */
+#ui .dim {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background: rgba(11, 13, 20, 0.6);
+  pointer-events: none;
+}
+
+#ui .cards {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: none;
+  gap: 16px;
+  max-width: calc(100vw - 32px);
+  transform: translate(-50%, -50%);
+}
+
+#ui .card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 280px;
+  height: 380px;
+  padding: 18px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#ui .card.empty {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#ui .card.curse {
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 46, 151, 0.22) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+#ui .card-title {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+#ui .card-pips {
+  color: var(--magenta);
+  letter-spacing: 0.2em;
+}
+
+#ui .card-stats {
+  flex: 1;
+  color: var(--heal);
+  font-size: 13px;
+  white-space: pre-line;
+}
+
+/* Which screens are up, driven by the game's scene. */
+#ui[data-scene='levelup'] .dim {
+  display: block;
+}
+
+#ui[data-scene='levelup'] .cards {
+  display: flex;
+}
+
+#ui[data-scene='paused'] .dim,
+#ui[data-scene='summary'] .dim {
+  display: block;
+}
+
+#ui[data-scene='paused'] .pause,
+#ui[data-scene='summary'] .summary {
+  display: block;
+}
+
+#ui[data-scene='menu'] .menu {
+  display: block;
+}
+
+#ui[data-scene='menu'] .hud {
+  opacity: 0;
+}

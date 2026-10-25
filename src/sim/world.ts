@@ -222,6 +222,9 @@ export interface World {
   /** Distance to the closest live enemy, Infinity when the arena is empty.
    * Refreshed by the enemy pass and read by the auto-fire decision. */
   enemyNear: number;
+  /** Pool slot of that closest enemy, -1 when there is none. Auto-fire leads its
+   * shot at this body; `enemyNear` says how far away it is, this says where. */
+  nearest: number;
   minX: number;
   minY: number;
   maxX: number;
@@ -347,6 +350,7 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     over: false,
     autoFire: false,
     enemyNear: Infinity,
+    nearest: -1,
     minX,
     minY,
     maxX,

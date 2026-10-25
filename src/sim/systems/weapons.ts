@@ -51,7 +51,7 @@ export function updateWeapons(world: World, frame: InputFrame): void {
 
   if (world.player.alive && wantsFire(world, frame)) {
     const slot = world.slots[world.activeSlot];
-    if (slot !== undefined) fire(world, slot);
+    if (slot !== undefined) fire(world, slot, !frame.fire);
   }
 
   updateShots(world);
@@ -88,15 +88,25 @@ function swapWeapon(w: World): void {
 
 /**
  * Hold-to-fire always shoots. Auto-fire only wakes up when something is actually
- * in range, which is what keeps a run from emptying a magazine into empty floor.
+ * in range, which is what keeps a run from emptying a magazine into empty floor,
+ * and it leads that target — see `fire`.
  */
 function wantsFire(w: World, frame: InputFrame): boolean {
   if (frame.fire) return true;
   return w.autoFire && w.enemyNear <= TUNE.autoFireRange;
 }
 
-/** Fire one round from `slot` if the gun is able to. */
-function fire(w: World, slot: WeaponSlot): void {
+/**
+ * Fire one round from `slot` if the gun is able to.
+ *
+ * `auto` marks the trigger as auto-fire rather than a held button, and the two aim
+ * differently on purpose: a held trigger fires exactly where the mouse steered,
+ * while auto-fire leads the nearest body. Auto-fire exists so the gun keeps working
+ * while the player is busy moving, and a round fired along whatever the aim happened
+ * to be last almost never finds the crowd closing in from every side, which would
+ * leave the setting looking broken.
+ */
+function fire(w: World, slot: WeaponSlot, auto: boolean): void {
   const def = WEAPONS[slot.weapon];
   // The other fire kinds get their own delivery path here; a weapon that names a
   // kind the sim does not implement yet simply does not shoot.
@@ -110,13 +120,23 @@ function fire(w: World, slot: WeaponSlot): void {
   const player = w.player;
   let ax = player.aimX;
   let ay = player.aimY;
-  const aimLen = Math.sqrt(ax * ax + ay * ay);
-  if (aimLen < EPS) {
-    ax = 1;
-    ay = 0;
+  if (auto && w.nearest >= 0) {
+    const ex = w.enemies.x[w.nearest] - player.x;
+    const ey = w.enemies.y[w.nearest] - player.y;
+    const targetLen = Math.sqrt(ex * ex + ey * ey);
+    if (targetLen > EPS) {
+      ax = ex / targetLen;
+      ay = ey / targetLen;
+    }
   } else {
-    ax /= aimLen;
-    ay /= aimLen;
+    const aimLen = Math.sqrt(ax * ax + ay * ay);
+    if (aimLen < EPS) {
+      ax = 1;
+      ay = 0;
+    } else {
+      ax /= aimLen;
+      ay /= aimLen;
+    }
   }
 
   if (def.spread > 0) {

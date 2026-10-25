@@ -93,11 +93,25 @@ export function awardXp(w: World, xp: number): void {
   checkLevelUp(w);
 }
 
-/** XP that buys the next level: the per-level costs summed up to `level`. */
-function xpForNext(level: number): number {
+/** XP the player has to be holding to reach `level`, summed from level 1 up. */
+export function xpForLevel(level: number): number {
   let need = 0;
   for (let l = 1; l <= level; l++) need += TUNE.xpBase + (l - 1) * TUNE.xpStep;
   return need;
+}
+
+/**
+ * How far through the current level the XP bar is, 0..1.
+ *
+ * The overlay asks for this instead of redoing the maths: the thresholds are a sim
+ * rule, and a second copy of them in the HUD would drift away from the game.
+ */
+export function xpProgress(w: World): number {
+  const low = xpForLevel(w.player.level - 1);
+  const span = xpForLevel(w.player.level) - low;
+  if (span <= 0) return 0;
+  const progress = (w.player.xp - low) / span;
+  return progress < 0 ? 0 : progress > 1 ? 1 : progress;
 }
 
 /**
@@ -109,7 +123,7 @@ function xpForNext(level: number): number {
  */
 function checkLevelUp(w: World): void {
   if (w.pendingLevelUp) return;
-  if (w.player.xp < xpForNext(w.player.level)) return;
+  if (w.player.xp < xpForLevel(w.player.level)) return;
   if (!buildChoices(w, false)) return;
 
   w.pendingLevelUp = true;

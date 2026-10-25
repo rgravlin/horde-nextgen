@@ -1,0 +1,25 @@
+[
+  {
+    "name": "slice",
+    "path": "/?seed=1",
+    "steps": [
+      { "wait": 4000 },
+      { "press": "Enter" },
+      { "wait": 600 },
+      { "state": { "scene": "==playing" } },
+      { "hold": ["KeyD", 1500] },
+      { "state": { "player.x": ">0.5" } },
+      { "wait": 9000 },
+      { "state": { "kills": ">0" } },
+      { "shot": "play" },
+      { "press": "Escape" },
+      { "wait": 400 },
+      { "state": { "scene": "==paused" } },
+      { "shot": "pause" },
+      { "press": "Escape" },
+      { "wait": 400 },
+      { "state": { "scene": "==playing" } },
+      { "state": { "errors": "==0" } }
+    ]
+  }
+]
