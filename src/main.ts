@@ -20,8 +20,9 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
-import { createApp, type App, type ForgeState } from './game/app';
-import { defaultSettings, loadSettings, type Settings, type StorageLike } from './game/persistence';
+import { createApp, snapshotSettings, type App, type ForgeState } from './game/app';
+import { defaultSettings, loadMeta, loadSettings, type Settings, type StorageLike } from './game/persistence';
+import { buildBinds } from './input/bindings';
 import { createView, type View, type ViewOptions } from './render/renderer';
 import { createHud } from './ui/hud';
 
@@ -103,6 +104,7 @@ function idleState(backend: ForgeState['backend']): ForgeState {
     levelUpChoices: [],
     fps: 0,
     errors: 0,
+    settings: snapshotSettings(defaultSettings(), buildBinds()),
   };
 }
 
@@ -189,7 +191,17 @@ async function boot(): Promise<void> {
   backend = view ? view.backend : 'none';
 
   const hud = ui ? createHud(ui) : null;
-  app = createApp({ view, hud, seed, backend, storage });
+  app = createApp({
+    view,
+    hud,
+    seed,
+    backend,
+    storage,
+    settings,
+    // Unlocks and history come in beside the settings for the same reason: the chapter grid and
+    // the Runs table read them, and `src/game` may not reach for `window`.
+    meta: storage === null ? undefined : loadMeta(storage, { note: (problem) => quiet.push(problem) }),
+  });
 
   // A settings file that would not parse is counted rather than hushed (AGENTS.md): the tier
   // and the shake the player chose are gone, so this is not the run they asked for, and

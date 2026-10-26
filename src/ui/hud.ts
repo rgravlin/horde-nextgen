@@ -31,23 +31,46 @@ import { WEAPONS, type WeaponDef } from '../content/weapons';
 import { Phase } from '../sim/systems/levels';
 import { xpProgress } from '../sim/systems/pickups';
 import { TUNE, type Pool, type WeaponSlot, type World } from '../sim/world';
+import type { BindAction, BindTable } from '../input/bindings';
+import type { Meta, Settings } from '../game/persistence';
 import { createCardPanel } from './levelup';
+import { createScreens } from './menus';
 import { createRadar } from './radar';
 import './styles.css';
 
-/** What an HUD control asks the game to do. */
+/**
+ * What an HUD control asks the game to do.
+ *
+ * All of them are *scene* requests: not one of them is a gameplay action. Moving, shooting,
+ * dashing and picking a card go through the input sampler and land in an `InputFrame`, because
+ * they belong to the simulation's clock; these belong to the shell's, and the shell decides what
+ * each one means. `pause` and `resume` are one key read two ways, and `back` is the way out of a
+ * panel that was opened from another panel.
+ */
 export type HudCommand =
   | 'start'
   | 'pause'
   | 'resume'
   | 'restart'
+  | 'restartLevel'
   | 'menu'
   | 'reroll'
   | 'save'
-  | 'load';
+  | 'load'
+  | 'levelselect'
+  | 'settings'
+  | 'history'
+  | 'back';
 
-/** The slice of the game the HUD reads. Kept structural so the HUD needs no import
- * from the layer that owns it. */
+/**
+ * The slice of the game the overlay reads. Kept structural so the HUD needs no import from the
+ * layer that owns it — the three types above are data shapes, not owners.
+ *
+ * Everything below `hasSave` exists so the panels can stay ignorant: the chapter grid asks
+ * whether a chapter is open rather than working out what "open" means, the dials read and write
+ * one settings object rather than keeping a copy of it, and the Controls tab reads and edits the
+ * one key map the sampler also reads (`input/bindings.ts`).
+ */
 export interface HudView {
   readonly scene: string;
   readonly world: World;
@@ -55,11 +78,25 @@ export interface HudView {
   pick(index: number): void;
   command(cmd: HudCommand): void;
   /**
-   * Whether a run is waiting in storage. Asked once per scene change, which is the only
-   * moment it matters: it decides whether the title offers Continue and whether the pause
-   * menu offers Load, and a screen that cannot do a thing should not show a button for it.
+   * Whether a run is waiting in storage. Asked when a screen changes, which is the only moment
+   * it matters: it decides whether the title offers Continue and whether the pause panel offers
+   * Load, and a screen that cannot do a thing should not show a button for it.
    */
   hasSave(): boolean;
+  /** Take a chapter tile. `index` is the chapter's slot in `content/levels.ts`. */
+  choose(index: number): void;
+  /** The live settings, for the Settings panel. Read while that panel is up. */
+  readonly settings: Settings;
+  /** Change one, and write the file. A view that is not storage-backed can ignore it. */
+  setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void;
+  /** Unlocks and history, for the chapter grid and the Runs table. */
+  readonly meta: Meta;
+  /** The live key map, which the Controls tab lists and edits. */
+  readonly bindings: BindTable;
+  /** Put `action` onto `source`, with the swap rule that lives in `input/bindings.ts`. */
+  rebind(action: BindAction, source: string): void;
+  /** Back to the shipped map. */
+  resetBindings(): void;
 }
 
 export interface Hud {
@@ -108,7 +145,14 @@ const POWER_ROWS = 12;
 /** Frames between re-reads of the viewport size, which changes when the window does. */
 const SIZE_EVERY = 45;
 
-const el = document.createElement.bind(document);
+/**
+ * The scenes that have a fight to read out.
+ *
+ * Everywhere else the readouts are hidden by CSS and there is nothing behind them: the title and
+ * the four panel screens show an idle or frozen world, and painting a clock, a power column and
+ * two map sweeps for a world nobody is playing is work spent on pixels that are not drawn.
+ */
+const PLAY_SCENES = new Set(['playing', 'levelup', 'paused', 'summary', 'victory']);
 
 function make(tag: string, className: string, parent: HTMLElement): HTMLElement {
   const node = document.createElement(tag);
@@ -223,36 +267,6 @@ function handLabel(id: string): { name: string; tag: string } {
     handLabels.set(id, labels);
   }
   return labels;
-}
-
-/**
- * One control.
- *
- * `action` is what the button *means* to anything reading the overlay from the outside —
- * a scenario clicks `[data-action='save']` — and defaults to the command. They differ once:
- * the title's Continue and the pause menu's Load are both `load`, but only the first is
- * Continue, and a selector that cannot tell two buttons apart cannot click one of them.
- */
-function button(
-  parent: HTMLElement,
-  label: string,
-  command: HudCommand,
-  view: () => HudView,
-  action: string = command,
-): HTMLButtonElement {
-  const b = el('button');
-  b.className = 'btn';
-  b.type = 'button';
-  b.dataset['action'] = action;
-  b.textContent = label;
-  b.addEventListener('click', () => {
-    // Focus has to go back to the page or the next Space press re-activates the
-    // button instead of dashing.
-    b.blur();
-    view().command(command);
-  });
-  parent.appendChild(b);
-  return b;
 }
 
 /**
@@ -424,40 +438,12 @@ export function createHud(root: HTMLElement): Hud {
   );
   root.appendChild(cards.element);
 
-  // Title menu: the scene machine's entry point, so Start has to be reachable. Continue
-  // sits above it and starts hidden — it is only ever offered when there is a run in
-  // storage to come back to, and the game that decides is the shell, not this file.
-  const menu = make('div', 'menu', root);
-  make('h1', 'title', menu).textContent = 'Neon Horde';
-  make('p', 'subtitle', menu).textContent = 'A factory floor, a thousand bodies, one pistol.';
-  const menuButtons = make('div', 'stack', menu);
-  const continueBtn = button(menuButtons, 'Continue', 'load', () => view!, 'continue');
-  continueBtn.hidden = true;
-  button(menuButtons, 'Start  [Enter]', 'start', () => view!);
-
-  const pausePanel = make('div', 'panel pause', root);
-  make('h2', 'head', pausePanel).textContent = 'Paused';
-  make('p', 'hint', pausePanel).textContent = 'WASD move · Space or Shift dash · Q swap hands · Esc resume';
-  const pauseButtons = make('div', 'stack', pausePanel);
-  button(pauseButtons, 'Resume  [Esc]', 'resume', () => view!);
-  button(pauseButtons, 'Save run', 'save', () => view!, 'save');
-  const loadBtn = button(pauseButtons, 'Load saved run', 'load', () => view!, 'load');
-  loadBtn.hidden = true;
-  button(pauseButtons, 'Restart run', 'restart', () => view!);
-  button(pauseButtons, 'Menu', 'menu', () => view!);
-
-  const summary = make('div', 'panel summary', root);
-  const summaryHead = make('h2', 'head', summary);
-  const summaryStats = make('div', 'stats', summary);
-  const summaryRows = ['score', 'kills', 'time', 'level'].map((key) => {
-    const row = make('div', 'stat', summaryStats);
-    make('span', 'key', row).textContent = key;
-    const value = make('b', 'num', row);
-    return { key, value };
-  });
-  const summaryButtons = make('div', 'stack', summary);
-  button(summaryButtons, 'Restart  [Enter]', 'restart', () => view!);
-  button(summaryButtons, 'Menu', 'menu', () => view!);
+  // The screen panels — title, chapters, settings, history, pause, summary, victory — live in
+  // `menus.ts` and are siblings of `.hud`, never children of it: `.hud` is `pointer-events:
+  // none`, and a button that inherits that cannot be clicked. They are built after `.dim` so a
+  // frozen playfield paints under them, and which one is up is CSS's job, keyed off the scene
+  // written just below.
+  const screens = createScreens(root, () => view!);
 
   /** Values already written, so a steady frame costs nothing. */
   const last = { scene: '', powers: '', boss: '', bossOn: false };
@@ -615,28 +601,23 @@ export function createHud(root: HTMLElement): Hud {
       frame++;
 
       if (scene !== last.scene) {
+        // One attribute write moves every panel at once: `styles.css` shows the panel whose
+        // `data-panel` matches the scene and hides the rest, and takes the readouts down with it
+        // on the screens that have nothing to read out.
         root.dataset['scene'] = scene;
         last.scene = scene;
 
-        // The two ways back into a saved run, offered only while one exists. Re-read on
-        // every screen change rather than every frame: the answer only moves when a run
-        // ends or is written, and both happen across a screen change.
-        const resumable = hudView.hasSave();
-        continueBtn.hidden = !resumable;
-        loadBtn.hidden = !resumable;
-
+        // The cards have been hidden since the last time they were up, so they cannot trust what
+        // they drew then (see `CardPanel.render`'s `force`).
         if (scene === 'levelup') cards.render(world, true);
-        if (scene === 'summary') {
-          setText(summaryHead, world.player.alive ? 'Run over' : 'You died');
-          setText(summaryRows[0].value, String(world.score));
-          setText(summaryRows[1].value, String(world.kills));
-          setText(summaryRows[2].value, `${world.time.toFixed(1)} s`);
-          setText(summaryRows[3].value, String(world.player.level));
-        }
-        // A new screen is a new picture: the map and the arrows are stale by definition, and
-        // a frozen scene would otherwise never be drawn again.
+        // A new screen is a new picture: the map and the arrows are stale by definition, and a
+        // frozen scene would otherwise never be drawn again.
         radar.draw(world, true);
       }
+
+      screens.sync(hudView);
+
+      if (!PLAY_SCENES.has(scene)) return;
 
       if (scene === 'levelup') cards.render(world, false);
       renderPowers(world);

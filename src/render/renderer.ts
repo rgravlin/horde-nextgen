@@ -243,6 +243,14 @@ export interface ViewOptions {
   quality?: Quality;
   /** The settings' resolution scale, 0.5..1; multiplies under the tier's own ceiling. */
   resolutionScale?: number;
+  /** Take shadows away from whatever the tier picked. */
+  shadows?: boolean;
+  /** Take the bloom and chromatic passes away from whatever the tier picked. */
+  bloom?: boolean;
+  /** Fraction of the tier's particle budget; 0 leaves the spark field unbuilt. */
+  particles?: number;
+  /** Whether hits throw floating numbers. False skips the DOM layer entirely. */
+  damageNumbers?: boolean;
   /** The settings' shake amount, 0..1. DESIGN.md's default is 70%. */
   shake?: number;
   /** The DOM overlay the damage numbers draw into, or null for a canvas-only page. */
@@ -293,7 +301,13 @@ export async function createView(
     deviceKind: machine.deviceKind,
     setting: opts.quality,
   });
-  const profile = profileFor(quality);
+  const profile = profileFor(quality, {
+    // The player's subtractions, applied under the tier rather than instead of it: the tier is
+    // what the machine can do, these are what the player asked for.
+    shadows: opts.shadows,
+    bloom: opts.bloom,
+    particles: opts.particles,
+  });
   const scale = opts.resolutionScale ?? 1;
 
   // Resolution scale from TECH.md's tiers: 0.75x on Low, capped at 1x everywhere, and the
@@ -423,7 +437,12 @@ export async function createView(
    * through the same step/hold rule as everything else here, which is what makes a pause hold
    * the numbers where they were.
    */
-  const numbers: NumberLayer = createNumbers(opts.overlay ?? null);
+  // Off means the layer is never built, not that it draws nothing: the pool is sixty-four DOM
+  // nodes and a per-frame write sweep, and a player who turned the numbers away should not pay
+  // for either.
+  const numbers: NumberLayer = createNumbers(
+    opts.damageNumbers === false ? null : opts.overlay ?? null,
+  );
 
   /**
    * Everything drawn out of one World's pools, rebuilt when the World changes.
@@ -436,7 +455,8 @@ export async function createView(
     /** The World these layers read; changing it is what a restart looks like from here. */
     world: World;
     batches: Batches;
-    particles: ParticleView;
+    /** Null when the budget is nil, which is a setting rather than a tier. */
+    particles: ParticleView | null;
     props: PropView;
     hazards: SceneryView;
     telegraphs: TelegraphView;
@@ -486,7 +506,9 @@ export async function createView(
       hazards: createSceneryView(group, world),
       batches: createBatches(group, world, quality),
       telegraphs: createTelegraphView(group),
-      particles: createParticles(group, profile, particleMode),
+      // A nil budget leaves the field unbuilt rather than built empty: four batches of zero
+      // instances are four buffers and four draw calls paid for nothing.
+      particles: profile.particles > 0 ? createParticles(group, profile, particleMode) : null,
       group,
       // A fresh World means a fresh event ring, so the reader starts at its beginning rather
       // than resuming wherever the last run's cursor had got to.
@@ -585,7 +607,7 @@ export async function createView(
       kit.hazards.sync(world);
       kit.batches.sync(world, alpha, dt);
       kit.telegraphs.sync(world, dt);
-      kit.particles.sync(world.fx);
+      kit.particles?.sync(world.fx);
       lights.sync(world.fx, p.x, p.y);
       if (stepping) feedFeel(kit, world);
 

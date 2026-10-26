@@ -243,9 +243,48 @@ const PROFILES: Record<Quality, TierProfile> = {
   },
 };
 
-/** The profile for one tier. Every key exists on every tier; the values are the difference. */
-export function profileFor(tier: Quality): TierProfile {
-  return PROFILES[tier];
+/**
+ * What a player turned down from the tier the machine picked.
+ *
+ * The tier answers "what did the machine pick"; this answers "what did the player take away
+ * from it", and the two are applied in that order — a `shadows: true` on Low does not buy
+ * shadows, because the tier's answer is the ceiling and the settings only ever sit under it.
+ * `undefined` on any of them means "no opinion", which is what a first launch has.
+ */
+export interface QualityOverrides {
+  readonly shadows?: boolean;
+  readonly bloom?: boolean;
+  /** Fraction of the tier's particle budget, 0..1. 0 means the field is not built at all. */
+  readonly particles?: number;
+}
+
+function under(v: number | undefined, fallback: number): number {
+  if (v === undefined) return fallback;
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** The profile for one tier, with the player's subtractions applied. */
+export function profileFor(tier: Quality, overrides?: QualityOverrides): TierProfile {
+  const base = PROFILES[tier];
+  if (overrides === undefined) return base;
+
+  const shadows = overrides.shadows ?? base.shadows;
+  const bloom = overrides.bloom ?? base.bloom;
+  const particles = Math.round(base.particles * under(overrides.particles, 1));
+  if (shadows === base.shadows && bloom === base.bloom && particles === base.particles) return base;
+
+  // The chromatic punch goes with the bloom pass rather than having its own row: one "post"
+  // knob the player can find beats two he has to reason about, and a punch without a bloom is
+  // the same two passes costing the same frame time for half the picture.
+  return {
+    ...base,
+    shadows,
+    shadowMapSize: shadows ? base.shadowMapSize : 0,
+    bloom,
+    bloomStrength: bloom ? base.bloomStrength : 0,
+    chroma: bloom && base.chroma,
+    particles,
+  };
 }
 
 /**

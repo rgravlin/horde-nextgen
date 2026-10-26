@@ -14,10 +14,16 @@
  *   decides what they mean in the current scene. The sampler has no idea whether the
  *   game is paused: `takeCommands` only reports what was pressed.
  *
+ * Which key means what is not in this file: it comes from `bindings.ts` as a compiled
+ * `BindTable`, the one map the Controls tab edits too. That is what makes a remap real —
+ * the settings screen changes the table, `setBindings` hands the sampler the new one, and
+ * the next key press is already read under it.
+ *
  * The host is injected so a test can hand it a fake: `addEventListener` and
  * `removeEventListener` are all this file needs from it.
  */
 
+import { buildBinds, heldFlagOf, moveVectorOf, pickSlotOf, type BindTable } from './bindings';
 import { resetFrame, type InputFrame } from '../sim/input';
 
 /** The part of a key or pointer event this file reads. */
@@ -59,39 +65,25 @@ export interface SamplerPorts {
   project?: (clientX: number, clientY: number, out: { x: number; y: number }) => boolean;
   /** Where the aim is measured from — the player, read fresh every sample. */
   player: () => { x: number; y: number };
+  /**
+   * The bind map to read keys through. Left out, the sampler uses the shipped default
+   * (`buildBinds()`), which is what the sampler's own tests and a headless run do.
+   */
+  bindings?: BindTable;
 }
 
 /** Below this length an aim vector is a shrug, not a direction. */
 const EPS = 1e-6;
 
-/** Keys that pause, accept and reroll. Everything else is held state. */
-const PAUSE_KEYS = new Set(['Escape', 'KeyP']);
-const ACCEPT_KEYS = new Set(['Enter', 'NumpadEnter']);
-const REROLL_KEYS = new Set(['KeyR']);
-const DASH_KEYS = new Set(['Space', 'ShiftLeft', 'ShiftRight']);
-const PICK_KEYS = new Map([
-  ['Digit1', 1],
-  ['Digit2', 2],
-  ['Digit3', 3],
-  ['Numpad1', 1],
-  ['Numpad2', 2],
-  ['Numpad3', 3],
-]);
-
-/** Code -> [moveX, moveY], in world axes: +x is east, +y is the far side of the floor. */
-const MOVE_KEYS = new Map<string, readonly [number, number]>([
-  ['KeyW', [0, 1]],
-  ['ArrowUp', [0, 1]],
-  ['KeyS', [0, -1]],
-  ['ArrowDown', [0, -1]],
-  ['KeyA', [-1, 0]],
-  ['ArrowLeft', [-1, 0]],
-  ['KeyD', [1, 0]],
-  ['ArrowRight', [1, 0]],
-]);
-
-/** Keys whose default (scrolling the page) has to be swallowed while held. */
-const SWALLOWED = new Set([...DASH_KEYS, ...MOVE_KEYS.keys()]);
+/**
+ * A pointer button as a bind source (`Mouse0` for the primary button), or undefined.
+ *
+ * A button is a source rather than a hard-coded "button 0 means fire" so the Controls tab can
+ * offer it: fire on the mouse is a default, not a law.
+ */
+function pointerSource(e: InputEventLike): string | undefined {
+  return typeof e.button === 'number' ? `Mouse${e.button}` : undefined;
+}
 
 function defaultHost(): InputHost {
   const none = {
@@ -111,12 +103,13 @@ export class InputSampler {
   private readonly ports: SamplerPorts;
   private readonly host: InputHost;
   private readonly down = new Set<string>();
+  private readonly held = new Set<'dash' | 'fire'>();
   private readonly ground = { x: 0, y: 0 };
   private readonly commands: CommandBits = { pause: false, accept: false, reroll: false };
 
+  private binds: BindTable;
   private pointerX = 0;
   private pointerY = 0;
-  private firing = false;
   private swapLatch = false;
   private pickLatch = 0;
   private aimX = 1;
@@ -128,6 +121,7 @@ export class InputSampler {
   constructor(ports: SamplerPorts) {
     this.ports = ports;
     this.host = ports.host ?? defaultHost();
+    this.binds = ports.bindings ?? buildBinds();
 
     this.on('keydown', (e) => this.handleKey(e, true));
     this.on('keyup', (e) => this.handleKey(e, false));
@@ -137,16 +131,31 @@ export class InputSampler {
       if (typeof e.clientY === 'number') this.pointerY = e.clientY;
     });
     this.on('pointerdown', (e) => {
-      if (e.button === 0) this.firing = true;
+      const source = pointerSource(e);
+      if (source !== undefined) this.press(source);
     });
     this.on('pointerup', (e) => {
-      if (e.button === 0) this.firing = false;
+      const source = pointerSource(e);
+      if (source !== undefined) this.release(source);
     });
     // The wheel swaps hands. Read as state rather than a latch so a spinning wheel
-    // cannot stack ten swaps into one tick.
+    // cannot stack ten swaps into one tick. It is not a bind, so it is not remappable
+    // and not taken away by a remap of `swap` — the `hint` on that row says so.
     this.on('wheel', () => {
       this.swapLatch = true;
     });
+  }
+
+  /**
+   * Point the sampler at a different bind map.
+   *
+   * Every held key is dropped on the way in: a key pressed under the old map means
+   * something else under the new one, and carrying it over would spend the change on
+   * whatever the player happened to be holding when the settings screen opened.
+   */
+  setBindings(table: BindTable): void {
+    this.binds = table;
+    this.releaseAll();
   }
 
   private on(type: string, listener: (e: InputEventLike) => void): void {
@@ -154,33 +163,79 @@ export class InputSampler {
     this.bound.push([type, listener]);
   }
 
+  /**
+   * Resolve one source to the action the table says it carries, and set that latch.
+   *
+   * Shared by the keyboard and the pointer because the table does not care which device a
+   * source came from: `Mouse0` and `KeyJ` are the same kind of key to it, which is how fire
+   * can be moved off the mouse without a second code path.
+   */
+  private press(source: string): void {
+    const action = this.binds.actionOf(source);
+    if (action === undefined) return;
+
+    const flag = heldFlagOf(action);
+    if (flag !== undefined) {
+      this.held.add(flag);
+      return;
+    }
+
+    switch (action) {
+      case 'pause':
+        this.commands.pause = true;
+        break;
+      case 'accept':
+        this.commands.accept = true;
+        break;
+      case 'reroll':
+        this.commands.reroll = true;
+        break;
+      case 'swap':
+        this.swapLatch = true;
+        break;
+      default: {
+        // A move key needs nothing here: `sample` reads it back out of `down`.
+        const pick = pickSlotOf(action);
+        if (pick > 0) this.pickLatch = pick;
+      }
+    }
+  }
+
+  /** Let one source go, and only let a held flag go once no other source still holds it. */
+  private release(source: string): void {
+    this.down.delete(source);
+
+    const flag = heldFlagOf(this.binds.actionOf(source));
+    if (flag === undefined || !this.held.has(flag)) return;
+    for (const other of this.down) {
+      if (heldFlagOf(this.binds.actionOf(other)) === flag) return;
+    }
+    this.held.delete(flag);
+  }
+
   private handleKey(e: InputEventLike, pressed: boolean): void {
     const code = e.code;
     if (!code) return;
 
-    if (pressed) {
-      if (SWALLOWED.has(code)) e.preventDefault?.();
-      // A held key repeats; only the first transition means anything.
-      if (this.down.has(code)) return;
-      this.down.add(code);
-
-      if (PAUSE_KEYS.has(code)) this.commands.pause = true;
-      else if (ACCEPT_KEYS.has(code)) this.commands.accept = true;
-      else if (REROLL_KEYS.has(code)) this.commands.reroll = true;
-      else {
-        const pick = PICK_KEYS.get(code);
-        if (pick !== undefined) this.pickLatch = pick;
-        if (code === 'KeyQ') this.swapLatch = true;
-      }
-    } else {
-      this.down.delete(code);
+    if (!pressed) {
+      this.release(code);
+      return;
     }
+
+    // Bound keys owe the page a `preventDefault` (scrolling, the caret, click-drag); see
+    // `swallows` in `bindings.ts`, which also keeps the scroll keys swallowed when a player
+    // has taken them off their action.
+    if (this.binds.swallows(code)) e.preventDefault?.();
+    // A held key repeats; only the first transition means anything.
+    if (this.down.has(code)) return;
+    this.down.add(code);
+    this.press(code);
   }
 
   /** Losing the window loses the keys: nothing may stay held through a focus loss. */
   private releaseAll(): void {
     this.down.clear();
-    this.firing = false;
+    this.held.clear();
   }
 
   /**
@@ -193,22 +248,16 @@ export class InputSampler {
   sample(frame: InputFrame): void {
     resetFrame(frame);
 
-    for (const code of this.down) {
-      const move = MOVE_KEYS.get(code);
-      if (move) {
+    for (const source of this.down) {
+      const move = moveVectorOf(this.binds.actionOf(source));
+      if (move !== undefined) {
         frame.moveX += move[0];
         frame.moveY += move[1];
       }
     }
 
-    for (const code of DASH_KEYS) {
-      if (this.down.has(code)) {
-        frame.dash = true;
-        break;
-      }
-    }
-
-    frame.fire = this.firing;
+    frame.dash = this.held.has('dash');
+    frame.fire = this.held.has('fire');
     frame.swap = this.swapLatch;
     this.swapLatch = false;
     frame.pick = this.pickLatch;

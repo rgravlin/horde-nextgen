@@ -58,6 +58,8 @@
 #ui .panel,
 #ui .card,
 #ui .btn,
+#ui .row,
+#ui .tile,
 #ui .slot,
 #ui .power {
   background: var(--void);
@@ -532,10 +534,13 @@
 
 /* ── Screens ─────────────────────────────────────────────────────────────────────
  * Everything outside the four corners is one screen at a time, all left-aligned stacks
- * or centred cards over the frozen scene. */
-#ui .menu,
-#ui .pause,
-#ui .summary {
+ * or centred cards over the frozen scene.
+ *
+ * One class, seven instances: `menus.ts` builds every panel at boot and the rules at the
+ * bottom of this file decide which one is up from `#ui[data-scene]`. `display: none` is the
+ * default so a screen nobody asked for costs no layout, and `pointer-events: auto` is what
+ * makes its buttons clickable under `#ui`'s pass-through. */
+#ui .screen {
   position: absolute;
   top: 22%;
   left: var(--margin);
@@ -543,6 +548,21 @@
   width: min(380px, calc(100vw - 2 * var(--margin)));
   padding: 20px;
   pointer-events: auto;
+}
+
+/* The two screens that are a grid or a table rather than a list of buttons get more width
+   and a higher start: nine buttons stacked is taller than either of them, and the pause
+   stack has to fit the same way at 640px of window height. */
+#ui .screen[data-panel='chapters'] {
+  width: min(560px, calc(100vw - 2 * var(--margin)));
+}
+
+#ui .screen[data-panel='history'] {
+  width: min(520px, calc(100vw - 2 * var(--margin)));
+}
+
+#ui .screen[data-panel='pause'] {
+  top: 12%;
 }
 
 #ui .title {
@@ -622,6 +642,198 @@
 
 #ui .stats b.num {
   font-weight: 500;
+}
+
+/* ── Chapter grid ───────────────────────────────────────────────────────────────
+ * Ten tiles at HUD scale, four across on a wide window and folding under itself on a narrow
+ * one. DESIGN.md's 118px tile with a 56px numeral and two 18px lines is 120px of text in a
+ * 98px content box, so the type comes down until it fits: the brief's point is a tile you read
+ * at a glance, and a clipped chapter name is not that. */
+#ui .tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 118px);
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+#ui .tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 118px;
+  height: 118px;
+  padding: 10px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#ui .tile:hover {
+  border-color: var(--cyan);
+}
+
+#ui .tile-num {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--cyan);
+}
+
+#ui .tile-name {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#ui .tile-time {
+  margin-top: auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dim-text);
+}
+
+/* A chapter that has not been earned is the same tile with the colour taken out, which is
+   what "desaturated" means here: the shape and the number stay, so the grid still reads as
+   ten chapters with two of them not yours yet. */
+#ui .tile.locked {
+  opacity: 0.34;
+  cursor: default;
+}
+
+#ui .tile.locked .tile-num {
+  color: var(--dim-text);
+}
+
+/* ── Settings rows ──────────────────────────────────────────────────────────────
+ * Four tabs, one visible list at a time, and every row one button. The tab strip is buttons
+ * too, so a tab is a thing a scenario can click and a keyboard can reach. */
+#ui .tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+#ui .tabs .btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+#ui .tabs .btn.on {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+
+#ui .rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+#ui .rows.hide {
+  display: none;
+}
+
+#ui .row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 12px;
+  padding: 7px 10px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#ui .row:hover {
+  border-color: var(--cyan);
+}
+
+#ui .row-key {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#ui .row-value {
+  font-weight: 500;
+  color: var(--cyan);
+}
+
+#ui .row-hint {
+  /* Second line, and dim: the label says what the row is, this says what it costs. */
+  grid-column: 1 / -1;
+  font-size: 11px;
+  color: var(--dim-text);
+}
+
+/* A keybind row waiting for a key. Magenta rather than Threat Red, which DESIGN.md reserves
+   for telegraphs — and a row still showing its old keys while it listens is how the player
+   knows what they would go back to if they press Esc instead. */
+#ui .row.listening {
+  border-color: var(--magenta);
+}
+
+#ui .row.listening .row-value {
+  color: var(--magenta);
+}
+
+/* ── Run history ────────────────────────────────────────────────────────────────
+ * A mono table, 13px, keys dim. The last column takes what is left so the four data columns
+ * keep their width and the weapons line is the thing that wraps. */
+#ui .table {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+
+#ui .trow {
+  display: grid;
+  grid-template-columns: 52px 44px 62px 38px 1fr;
+  gap: 10px;
+}
+
+#ui .trow.heads {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+}
+
+/* ── Victory ────────────────────────────────────────────────────────────────────
+ * The magenta→cyan sweep DESIGN.md asks for, behind the stats. Flat fill, no glow: it is the
+ * one place the horizon gradient is allowed on screen rather than on a backdrop. */
+#ui .screen.sweep {
+  border-color: var(--magenta);
+  background:
+    linear-gradient(135deg, rgba(255, 46, 151, 0.22), rgba(46, 242, 255, 0.2)),
+    var(--void);
+}
+
+/* A control that is not part of the stack it sits in: the Settings panel's Back hangs under
+   the rows so it cannot be read as another dial. */
+#ui .btn.under {
+  margin-top: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+#ui .btn.small {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+#ui .hint.note {
+  margin: 0 0 8px;
+  font-size: 11px;
 }
 
 /* The "your browser can't do this" panel (main.ts), so the one fatal message is at
@@ -835,10 +1047,15 @@
   padding-top: 2px;
 }
 
-/* Which screens are up. `data-scene` is the only state here. */
+/* Which screens are up. `data-scene` is the only state here, written once per scene change by
+ * `hud.ts`; `#ui`'s children are one screen each, so the attribute and the attribute selector
+ * are the whole mechanism. */
 #ui[data-scene='levelup'] .dim,
 #ui[data-scene='paused'] .dim,
-#ui[data-scene='summary'] .dim {
+#ui[data-scene='summary'] .dim,
+#ui[data-scene='victory'] .dim,
+#ui[data-scene='settings'] .dim,
+#ui[data-scene='history'] .dim {
   display: block;
 }
 
@@ -852,24 +1069,43 @@
   display: none;
 }
 
-/* The radar is a live map of what is near. On the two frozen, panel-covered screens it has
+/* The radar is a live map of what is near. On the frozen, panel-covered screens it has
    nothing left to say and the left panel would otherwise sit over its caption (the panel
-   starts at `top: 22%`, which on a short window climbs into the disc). Down here rather
-   than nudging the panel's `top`: the radar is the new element and the panel predates it. */
+   starts at `top: 22%`, which on a short window climbs into the disc). */
 #ui[data-scene='paused'] .radar,
-#ui[data-scene='summary'] .radar {
+#ui[data-scene='summary'] .radar,
+#ui[data-scene='victory'] .radar {
   display: none;
 }
 
-#ui[data-scene='paused'] .pause,
-#ui[data-scene='summary'] .summary {
-  display: block;
-}
-
-#ui[data-scene='menu'] .menu {
-  display: block;
-}
-
-#ui[data-scene='menu'] .hud {
+/* The four screens that are not a fight take the whole readout layer down. `hud.ts` stops
+   painting them at the same moment, so this is not hiding live information — it is spending no
+   layout on it. */
+#ui[data-scene='menu'] .hud,
+#ui[data-scene='levelselect'] .hud,
+#ui[data-scene='settings'] .hud,
+#ui[data-scene='history'] .hud {
   opacity: 0;
+}
+
+#ui[data-scene='menu'] .screen[data-panel='title'],
+#ui[data-scene='levelselect'] .screen[data-panel='chapters'],
+#ui[data-scene='settings'] .screen[data-panel='settings'],
+#ui[data-scene='history'] .screen[data-panel='history'],
+#ui[data-scene='paused'] .screen[data-panel='pause'],
+#ui[data-scene='summary'] .screen[data-panel='summary'],
+#ui[data-scene='victory'] .screen[data-panel='victory'] {
+  display: block;
+}
+
+/* The two end-of-run screens keep the frozen fight visible behind the panel, drained of
+ * colour, which is DESIGN.md's "desaturated freeze-frame". `#scene` is the canvas's own
+ * container and a sibling of `#ui`, so the only way a rule in this file can reach it is by
+ * asking whether the overlay says the run is over — and `:has()` is what lets it.
+ *
+ * Cost check: one compositing pass over the canvas, on two screens that have no gameplay
+ * running. Not a per-frame cost in a fight. */
+body:has(#ui[data-scene='summary']) #scene,
+body:has(#ui[data-scene='victory']) #scene {
+  filter: saturate(0.25);
 }

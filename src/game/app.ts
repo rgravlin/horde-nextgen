@@ -31,6 +31,7 @@
 import { ENEMIES } from '../content/enemies';
 import { POWERUPS } from '../content/powerups';
 import { WEAPONS } from '../content/weapons';
+import { BIND_DEFS, buildBinds, swapBinds, type BindAction, type BindTable } from '../input/bindings';
 import { InputSampler } from '../input/sampler';
 import type { View } from '../render/renderer';
 import { createInputFrame } from '../sim/input';
@@ -46,21 +47,48 @@ import {
   autosaveDue,
   clearSave,
   createAutosaveTimer,
+  defaultMeta,
+  defaultSettings,
   hasSave,
+  isChapterUnlocked,
   loadMeta,
   loadRun,
   markAutosaved,
   recordRunEnd,
   saveMeta,
   saveRun,
+  saveSettings,
   type AutosaveTimer,
+  type Meta,
+  type ParticlesSetting,
   type ProblemSink,
+  type QualitySetting,
+  type Settings,
   type StorageLike,
 } from './persistence';
 import type { Hud, HudCommand, HudView } from '../ui/hud';
 
-/** The scenes this slice runs. More arrive with the chapter and settings screens. */
-export type SceneId = 'menu' | 'playing' | 'levelup' | 'paused' | 'summary';
+/**
+ * The scenes this shell runs.
+ *
+ * Only `playing` advances the simulation; every other id draws a frozen frame, which is what
+ * "the game freezes" means here and what lets a pause hold a thousand bodies mid-charge without a
+ * single position changing (ARCHITECTURE.md "Scene state machine").
+ *
+ * Four of them are panels rather than states of a run — `levelselect`, `settings`, `history` and
+ * `victory` — and each remembers the screen it was opened from, so `back` returns to the pause
+ * panel from the pause panel and to the title from the title.
+ */
+export type SceneId =
+  | 'menu'
+  | 'playing'
+  | 'levelup'
+  | 'paused'
+  | 'summary'
+  | 'victory'
+  | 'levelselect'
+  | 'settings'
+  | 'history';
 
 /** A frame's worth of scene-level key presses, drained once by `takeCommands`. */
 interface CommandBits {
@@ -81,6 +109,38 @@ export interface ForgeWeapon {
   /** The barrel is venting, which is why the hand is not firing. */
   venting: boolean;
   reloading: boolean;
+}
+
+/**
+ * What `__forgeState().settings` reports.
+ *
+ * A snapshot rather than the whole `Settings`, and only the four knobs a browser scenario has
+ * reason to move: the two that change what is drawn, the trigger rule, and the shake. A test that
+ * turns a dial and reads it back on the next page load is the only proof that a setting is
+ * *stored* rather than merely applied, and this is the seam it reads through.
+ */
+export interface SettingsSnapshot {
+  quality: QualitySetting;
+  particles: ParticlesSetting;
+  damageNumbers: boolean;
+  autoFire: boolean;
+  shake: number;
+  /** The live key map: each action against its sources, space-joined. */
+  binds: Record<string, string>;
+}
+
+/** Build one, from the settings and the table compiled out of them. */
+export function snapshotSettings(settings: Settings, table: BindTable): SettingsSnapshot {
+  const binds: Record<string, string> = {};
+  for (const def of BIND_DEFS) binds[def.action] = table.sourcesOf(def.action).join(' ');
+  return {
+    quality: settings.quality,
+    particles: settings.particles,
+    damageNumbers: settings.damageNumbers,
+    autoFire: settings.autoFire,
+    shake: settings.shake,
+    binds,
+  };
 }
 
 /** The exact `window.__forgeState()` shape from TECH.md "State for checks". */
@@ -125,6 +185,8 @@ export interface ForgeState {
   levelUpChoices: string[];
   fps: number;
   errors: number;
+  /** The settings the shell runs under, and the live key map, for a scenario to read back. */
+  settings: SettingsSnapshot;
 }
 
 /** `window.__forgeDebug`, for scenarios and tests that need to set a scene up. */
@@ -147,6 +209,29 @@ export interface App {
   readonly debug: ForgeDebug;
   /** Count a caught error; surfaces through `state().errors`. */
   noteError(): void;
+
+  /** The live settings, as they came off disk. The Settings tab reads and writes through this. */
+  readonly settings: Settings;
+  /** Change one and store the file, so it is still there after a reload. */
+  setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void;
+  /** The live key map — the same table the sampler reads, not a copy of it. */
+  readonly bindings: BindTable;
+  /** Put `source` on `action`, swapping out whatever already had it. */
+  rebind(action: BindAction, source: string): void;
+  /** Back to the shipped map. */
+  resetBindings(): void;
+
+  /**
+   * Whether a resumable run is on the shelf.
+   *
+   * Answered from a flag rather than a `getItem`: the title and pause panels ask every frame,
+   * and a read of the file sixty times a second is not a check, it is a stall.
+   */
+  readonly hasSave: boolean;
+  /** Unlocks, best times and history, as read at boot and updated when a chapter or run ends. */
+  readonly meta: Meta;
+  /** Start chapter `index`, from the chapter grid or a restart at the current floor. */
+  choose(index: number): void;
 }
 
 export interface AppPorts {
@@ -155,8 +240,6 @@ export interface AppPorts {
   seed: number;
   /** Passed in so the state can report it without the shell importing the engine. */
   backend: 'webgpu' | 'webgl2' | 'none';
-  /** Auto-fire default (TECH.md: on). A setting later, but on for the slice. */
-  autoFire?: boolean;
   /**
    * Where a run outlives the page: `window.localStorage` in the browser, a `Map` in a
    * headless test, `null` where there is no storage at all (a browser with it turned off,
@@ -165,6 +248,16 @@ export interface AppPorts {
    * `window` that may not exist.
    */
   storage?: StorageLike | null;
+  /**
+   * The player's settings, decoded off disk by the shell.
+   *
+   * They come in through a port rather than being read here because `src/game` must not reach
+   * for `window.localStorage` (ARCHITECTURE.md: the sim runs headless in Node), and because a
+   * headless run then runs on `defaultSettings()` without a fake to invent.
+   */
+  settings?: Settings;
+  /** Unlocks, best times and history, read at boot. A run's end updates the copy. */
+  meta?: Meta;
 }
 
 /** Rolling window for the fps estimate; below this it reports 0 ("still warming up"). */
@@ -195,6 +288,14 @@ function createArchive(): RunArchive {
 
 const NOOP = (): void => {};
 
+/**
+ * The panel scenes that are a way into somewhere else, and so owe a way back.
+ *
+ * `paused` is not one of them: it is where the game stops, and the pause key leaves it the same
+ * way it entered.
+ */
+const PANEL_SCENES = new Set<SceneId>(['levelselect', 'settings', 'history']);
+
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
@@ -211,14 +312,38 @@ export function createApp(ports: AppPorts): App {
   const view = ports.view;
   const hud = ports.hud;
 
+  /**
+   * The three things a player can change, all read once and all live.
+   *
+   * `settings` is replaced rather than patched: it is the file's shape, so writing it out after
+   * a change writes the whole file, and the copy the panels read is never a frame behind the one
+   * that was stored. `binds` is the compiled form of `settings.binds` and is the *same table*
+   * the sampler looks keys up in — one map, two readers, which is the whole reason the bind
+   * table lives in `input/bindings.ts` instead of inside the sampler.
+   */
+  let settings = ports.settings ?? defaultSettings();
+  let binds = buildBinds(settings.binds);
+  /** Unlocks, best times and history; the copy the chapter grid and the history table read. */
+  let meta = ports.meta ?? defaultMeta();
+
   let world = createWorld(ports.seed);
-  world.autoFire = ports.autoFire ?? true;
+  world.autoFire = settings.autoFire;
 
   let scene: SceneId = 'menu';
+
+  /**
+   * Which screen a panel should hand back to.
+   *
+   * Settings and history open from both the title and the pause menu, and `back` means a
+   * different place in each. One variable remembers it; a second one for each panel is how a
+   * back button starts stranding the player.
+   */
+  let returnTo: SceneId = 'menu';
 
   const sampler = new InputSampler({
     player: () => world.player,
     project: view ? (clientX, clientY, out) => view.aim(clientX, clientY, out) : undefined,
+    bindings: binds,
   });
 
   const clock = createClock();
@@ -242,6 +367,15 @@ export function createApp(ports: AppPorts): App {
     },
   };
 
+  /**
+   * Whether there is a run to come back to, read once and kept up to date by every write.
+   *
+   * The title's Continue button and the pause menu's Load ask every frame they are on screen.
+   * Answering from the file would mean a `getItem` and a JSON parse sixty times a second to
+   * learn that nothing has changed; this flag changes only where the run's own writes land.
+   */
+  let saveOnShelf = storage === null ? false : hasSave(storage, problems);
+
   /** The storage debt of whichever run `world` is, rebuilt with it. */
   let archive = createArchive();
 
@@ -253,19 +387,22 @@ export function createApp(ports: AppPorts): App {
   };
 
   /**
-   * Throw the run away and start a fresh one on the same seed.
+   * Throw the run away and start a fresh one on chapter `chapter`.
    *
    * `startChapter` rather than `startWaves`: the chapter is what puts a floor under the
    * player, and the shell is the only door that does it (a fresh `World` is empty on
    * purpose). Starting only the wave clock gave a run a horde and no room — no cover,
    * no hazards, and a chapter counter stuck on 0 — which is exactly the flat endless
    * arena the design brief rules out.
+   *
+   * The chapter argument is what lets the chapter grid and the summary's Restart Level
+   * reuse this: both start a *run*, at a chosen floor, and neither is a special case.
    */
-  function restart(): void {
+  function restartRun(chapter: number): void {
     world = createWorld(ports.seed);
-    world.autoFire = ports.autoFire ?? true;
+    world.autoFire = settings.autoFire;
     archive = createArchive();
-    startChapter(world, 0);
+    startChapter(world, chapter);
     scene = 'playing';
   }
 
@@ -278,18 +415,59 @@ export function createApp(ports: AppPorts): App {
    */
   function enterWorld(w: World): void {
     world = w;
-    world.autoFire = ports.autoFire ?? true;
+    world.autoFire = settings.autoFire;
     archive = createArchive();
-    scene = w.over ? 'summary' : w.pendingLevelUp ? 'levelup' : 'playing';
+    scene = w.over
+      ? 'summary'
+      : w.victory
+        ? 'victory'
+        : w.pendingLevelUp
+          ? 'levelup'
+          : 'playing';
+  }
+
+  /**
+   * Open one of the panel scenes, remembering where it was opened from.
+   *
+   * A panel is a scene, so the sim freezes with it — that is what makes Settings a place to
+   * rebind the dash key mid-run rather than a thing you have to do between runs.
+   */
+  function openPanel(next: SceneId): void {
+    returnTo = scene === 'paused' ? 'paused' : 'menu';
+    scene = next;
+  }
+
+  /** Leave a panel back where it came in. */
+  function closePanel(): void {
+    scene = returnTo === scene ? 'menu' : returnTo;
+  }
+
+  /** Rebuild the key map and hand it to the sampler, which drops its held keys with it. */
+  function applyBinds(): void {
+    binds = buildBinds(settings.binds);
+    sampler.setBindings(binds);
+  }
+
+  /**
+   * Store the settings. One call, so a dial click and a keybind change cannot disagree about
+   * whether the file got written; a storage that refuses is counted and the change still applies
+   * for this run.
+   */
+  function storeSettings(): void {
+    if (storage === null) return;
+    saveSettings(storage, settings, problems);
   }
 
   /** Add this run to the machine's history, and open what it earned. */
   function writeMeta(w: World): void {
     if (storage === null) return;
     // One read, one write: the file is the history, so a run's row goes onto whatever is
-    // already there rather than replacing it, and `recordRunEnd` does the unlocking.
-    const meta = recordRunEnd(loadMeta(storage, problems), w, new Date().toISOString());
-    saveMeta(storage, meta, problems);
+    // already there rather than replacing it, and `recordRunEnd` does the unlocking. The
+    // in-memory copy follows the file, so a chapter grid opened after this offers what was
+    // earned rather than what was on disk when the page loaded.
+    const next = recordRunEnd(loadMeta(storage, problems), w, new Date().toISOString());
+    saveMeta(storage, next, problems);
+    meta = next;
   }
 
   /**
@@ -300,7 +478,7 @@ export function createApp(ports: AppPorts): App {
    */
   function writeSave(): void {
     if (storage === null) return;
-    saveRun(storage, world, problems);
+    if (saveRun(storage, world, problems)) saveOnShelf = true;
     markAutosaved(archive.autosave, world);
   }
 
@@ -329,6 +507,7 @@ export function createApp(ports: AppPorts): App {
       archive.ended = true;
       writeMeta(w);
       clearSave(storage, problems);
+      saveOnShelf = false;
       return;
     }
 
@@ -338,7 +517,7 @@ export function createApp(ports: AppPorts): App {
     }
 
     if (autosaveDue(archive.autosave, w)) {
-      saveRun(storage, w, problems);
+      if (saveRun(storage, w, problems)) saveOnShelf = true;
       markAutosaved(archive.autosave, w);
     }
   }
@@ -352,12 +531,14 @@ export function createApp(ports: AppPorts): App {
    */
   function applyCommands(): void {
     if (commands.accept) {
-      if (scene === 'menu' || scene === 'summary') restart();
+      if (scene === 'menu' || scene === 'summary' || scene === 'victory') restartRun(0);
+      else if (PANEL_SCENES.has(scene)) closePanel();
       commands.accept = false;
     }
     if (commands.pause) {
       if (scene === 'playing') scene = 'paused';
       else if (scene === 'paused') scene = 'playing';
+      else if (PANEL_SCENES.has(scene)) closePanel();
       commands.pause = false;
     }
   }
@@ -496,6 +677,7 @@ export function createApp(ports: AppPorts): App {
       levelUpChoices,
       fps: measureFps(),
       errors: errorCount + w.errors,
+      settings: snapshotSettings(settings, binds),
     };
   }
 
@@ -520,7 +702,8 @@ export function createApp(ports: AppPorts): App {
       if (scene === 'playing') {
         runFrame(clock, nowMs, false, stepOne, report);
         alpha = report.alpha;
-        if (world.over) scene = 'summary';
+        if (world.victory) scene = 'victory';
+        else if (world.over) scene = 'summary';
         else if (world.pendingLevelUp) scene = 'levelup';
       } else {
         // Frozen: runFrame clears the banked time instead of holding it, so a resume
@@ -542,16 +725,21 @@ export function createApp(ports: AppPorts): App {
     command(cmd) {
       switch (cmd) {
         case 'start':
-          if (scene === 'menu') restart();
+          if (scene === 'menu') restartRun(0);
           break;
         case 'restart':
-          if (scene !== 'menu') restart();
+          // A new run from the first floor; `restartLevel` is the same act on this floor.
+          if (scene !== 'menu') restartRun(0);
+          break;
+        case 'restartLevel':
+          if (scene !== 'menu') restartRun(world.chapter);
           break;
         case 'resume':
           if (scene === 'paused') scene = 'playing';
           break;
         case 'pause':
           if (scene === 'playing') scene = 'paused';
+          else if (PANEL_SCENES.has(scene)) closePanel();
           break;
         case 'reroll':
           if (scene === 'levelup') reroll(world);
@@ -564,12 +752,29 @@ export function createApp(ports: AppPorts): App {
         case 'load': {
           // The title's Continue and the pause menu's Load are the same act: stop this run
           // and play the stored one. From the pause menu that throws the run in hand away,
-          // which is what the player asked for by asking for a file.
-          if (scene !== 'menu' && scene !== 'paused') break;
+          // which is what the player asked for by asking for a file. A panel counts as
+          // frozen ground for this too: the file is a place to come back to from anywhere
+          // the game is standing still.
+          if (scene !== 'menu' && scene !== 'paused' && !PANEL_SCENES.has(scene)) break;
           const saved = storage === null ? null : loadRun(storage, problems);
-          if (saved !== null) enterWorld(saved);
+          if (saved !== null) {
+            enterWorld(saved);
+            saveOnShelf = true;
+          }
           break;
         }
+        case 'levelselect':
+          openPanel('levelselect');
+          break;
+        case 'settings':
+          openPanel('settings');
+          break;
+        case 'history':
+          openPanel('history');
+          break;
+        case 'back':
+          closePanel();
+          break;
         case 'menu':
           scene = 'menu';
           break;
@@ -586,6 +791,50 @@ export function createApp(ports: AppPorts): App {
 
     noteError() {
       errorCount++;
+    },
+
+    get settings() {
+      return settings;
+    },
+
+    setSetting(key, value) {
+      // A whole new object rather than a patch, because `settings` *is* the file's shape: this
+      // writes the file whole, so what the panels show and what a reload will read are the same
+      // thing. `autoFire` is the one entry a live world has to be told about.
+      settings = { ...settings, [key]: value } as Settings;
+      storeSettings();
+      if (key === 'autoFire') world.autoFire = settings.autoFire;
+    },
+
+    get bindings() {
+      return binds;
+    },
+
+    rebind(action, source) {
+      settings = { ...settings, binds: swapBinds(settings.binds, action, source) };
+      storeSettings();
+      applyBinds();
+    },
+
+    resetBindings() {
+      settings = { ...settings, binds: {} };
+      storeSettings();
+      applyBinds();
+    },
+
+    get hasSave() {
+      return saveOnShelf;
+    },
+
+    get meta() {
+      return meta;
+    },
+
+    choose(index) {
+      // The grid greys a locked tile out, but the click still arrives here, so this is where
+      // "you have not earned that floor yet" is decided — once, and not in the view.
+      if (index < 0 || !isChapterUnlocked(meta, index)) return;
+      restartRun(index);
     },
 
     debug: {
@@ -651,10 +900,31 @@ export function createApp(ports: AppPorts): App {
     command(cmd) {
       app.command(cmd);
     },
-    // Read once per scene change rather than per frame, so the title screen can ask
-    // "is there something to come back to" for the cost of one key lookup.
+    // Answered off the flag the writes keep current (see `saveOnShelf`), so a panel that asks
+    // every frame pays for a boolean rather than a file read and a JSON parse.
     hasSave() {
-      return storage === null ? false : hasSave(storage, problems);
+      return saveOnShelf;
+    },
+    choose(index) {
+      app.choose(index);
+    },
+    get settings() {
+      return settings;
+    },
+    setSetting(key, value) {
+      app.setSetting(key, value);
+    },
+    get meta() {
+      return meta;
+    },
+    get bindings() {
+      return binds;
+    },
+    rebind(action, source) {
+      app.rebind(action, source);
+    },
+    resetBindings() {
+      app.resetBindings();
     },
   };
 
