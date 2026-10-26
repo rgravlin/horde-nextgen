@@ -146,6 +146,54 @@ const SHAPES: Record<string, () => HordeMesh> = {
   }),
 
   /**
+   * Sniper: a tripod gun with one long barrel. The barrel is the silhouette and it points
+   * where the body is aiming — the shape and its sight line say the same line, which is the
+   * read the archetype asks for. It stops to fire, so the facing it holds does reach the
+   * mesh rather than only the telegraph.
+   */
+  sniper: () => ({
+    body: build(
+      [
+        [new OctahedronGeometry(0.26, 0).scale(1.5, 0.75, 1), 0, 0.62, -0.04],
+        [new CylinderGeometry(0.05, 0.045, 0.95, 5).rotateX(Math.PI / 2), 0, 0.66, 0.46],
+        [new CylinderGeometry(0.03, 0.03, 0.42, 4).rotateX(Math.PI / 2), 0.11, 0.84, 0.28],
+        leg(0.05, 0.42, 0.34, 0.2, -0.04),
+        leg(0.05, 0.42, -0.34, -0.2, -0.04),
+        leg(0.045, 0.34, 0.1, 0, -0.3),
+      ]
+    ),
+    // The muzzle and the lens: the two places the shot is promised from.
+    core: build(
+      [
+        [new OctahedronGeometry(0.07, 0), 0, 0.66, 0.96],
+        [new OctahedronGeometry(0.05, 0), 0, 0.79, 0.04],
+      ]
+    ),
+  }),
+
+  /**
+   * Orbiter: a flat lens under a ring. The ring is what makes it readable from above and it
+   * turns with the strafe, so the whole shape says "going round" even when the bolt line
+   * does not — the one silhouette the player has to be able to pick out of a crowd at speed.
+   */
+  orbiter: () => ({
+    body: build(
+      [
+        [new SphereGeometry(0.3, 6, 4).scale(1, 0.62, 1), 0, 0.64, 0],
+        [new TorusGeometry(0.38, 0.05, 4, 12).rotateX(Math.PI / 2), 0, 0.62, 0],
+        [new ConeGeometry(0.12, 0.26, 5), 0, 0.3, 0],
+        [new CylinderGeometry(0.05, 0.05, 0.3, 4).rotateX(Math.PI / 2), 0, 0.66, 0.3],
+      ]
+    ),
+    core: build(
+      [
+        [new OctahedronGeometry(0.09, 0), 0, 0.34, 0],
+        [new TorusGeometry(0.3, 0.03, 3, 10).rotateX(Math.PI / 2), 0, 0.7, 0],
+      ]
+    ),
+  }),
+
+  /**
    * Armored: a plated hull with two slabs in front of it. The plate is the archetype's
    * whole answer (flank it), so the silhouette has to say "not from here" from across the
    * room.

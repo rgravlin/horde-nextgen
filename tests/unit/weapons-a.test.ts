@@ -151,10 +151,11 @@ describe('weapon data', () => {
 
     // The enemy table is pinned the same way the weapon one is, so that adding an archetype
     // is a decision made here rather than a drift. What each behaviour does is pinned in
-    // tests/unit/enemies-a.test.ts (melee five), tests/unit/enemies-b.test.ts (ranged
-    // trio) and tests/unit/bosses.test.ts (the three encounters); this only guards the
-    // shape of the data. The last three carry `boss`, which takes them out of the wave
-    // recipes — an encounter a chapter ends on is not also drumbeat fodder.
+    // tests/unit/enemies-a.test.ts (melee five), tests/unit/enemies-b.test.ts (ranged trio),
+    // tests/unit/enemies-c.test.ts (the two marks) and tests/unit/bosses.test.ts (the three
+    // encounters); this only guards the shape of the data. The last three carry `boss`, which
+    // takes them out of the wave recipes — an encounter a chapter ends on is not also
+    // drumbeat fodder.
     expect(ENEMIES.map((d) => d.id)).toEqual([
       'chaser',
       'swarmling',
@@ -169,6 +170,8 @@ describe('weapon data', () => {
       'broodmother',
       'matron',
       'atlas',
+      'sniper',
+      'orbiter',
     ]);
     expect(ENEMIES.filter((d) => d.boss).map((d) => d.id)).toEqual([
       'broodmother',

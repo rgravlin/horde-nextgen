@@ -25,7 +25,7 @@
 
 import { DynamicDrawUsage, InstancedMesh, type BufferGeometry, type Object3D } from 'three/webgpu';
 
-import { ENEMIES } from '../content/enemies';
+import { ENEMIES, type AiId } from '../content/enemies';
 import { Ev, Tele, eventAt, type World } from '../sim/world';
 import { discGeometry, glowMaterial, laserGeometry, quadGeometry, ringGeometry } from './meshes';
 
@@ -58,6 +58,17 @@ const KIND_FALL = 3;
 
 /** Below this speed a body's heading comes from its facing rather than from its motion. */
 const EPS = 0.01;
+
+/**
+ * The bodies whose `Tele.Line` is a sight line rather than a strip of somewhere they are about
+ * to move.
+ *
+ * All four commit to a bearing before they spend it, which is the fact the shape has to carry:
+ * a tube says "this line is already decided", a strip says "somewhere along here". The two marks
+ * read their wind-up off the same clock their bolts use, so nothing here has to know that one of
+ * them keeps walking a circle the whole time it aims.
+ */
+const SIGHT_LINES = new Set<AiId>(['shooter', 'matron', 'sniper', 'orbiter']);
 
 export interface TelegraphView {
   /** Refresh the warnings from the tick's events and repack the shapes. */
@@ -202,9 +213,11 @@ export function createTelegraphView(scene: Object3D): TelegraphView {
         // counted down by the same wind-up clock.
         const seconds = def.params.fuseTime ?? def.params.slamWindup ?? 0.45;
         add(KIND_RING, body, x, y, def.params.blastRadius ?? 2.5, seconds);
-      } else if (def.ai === 'shooter' || def.ai === 'matron') {
+      } else if (SIGHT_LINES.has(def.ai)) {
         // The ones that shoot draw a sight line rather than a strip: it has to read edge-on,
-        // which is why it is a tube (see `laserGeometry`).
+        // which is why it is a tube (see `laserGeometry`). All four decide a bearing before
+        // they spend it, so the tube is the truth — including for the orbiter, whose feet keep
+        // walking a circle the whole time the line is up.
         add(KIND_LASER, body, x, y, 18, def.params.windup ?? 0.4);
       } else {
         // Everything else is about to *move*: a strip along the way it is facing, as long as the

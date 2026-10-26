@@ -53,6 +53,8 @@ const SHAPE_COSTS: Record<string, readonly [number, number]> = {
   sac: [178, 68],
   matron: [206, 70],
   atlas: [112, 32],
+  sniper: [92, 16],
+  orbiter: [158, 68],
 };
 
 /** Every mesh id the content tables actually spawn, in table order. */

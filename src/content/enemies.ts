@@ -9,6 +9,8 @@
  * namespace.
  */
 
+import { ENEMIES_A } from './enemiesA';
+
 export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
 
 /**
@@ -20,6 +22,10 @@ export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
  * reskinned bodies because a boss has to ask the player to do something the trash
  * never did: dodge a volley of charges, kill it away from the crowd it keeps breeding,
  * or answer two mechanics at once.
+ *
+ * `sniper` and `orbiter` are the two marks: different ranges and different feet, one
+ * bargain — a line is painted, held, then spent along it. They live in `enemiesA.ts` and
+ * share `systems/enemies/marksmen.ts`.
  */
 export const AI_IDS = [
   'chaser',
@@ -31,6 +37,8 @@ export const AI_IDS = [
   'shooter',
   'grenadier',
   'healer',
+  'sniper',
+  'orbiter',
   'brute',
   'brooder',
   'matron',
@@ -110,16 +118,20 @@ export interface EnemyDef {
  * The last row carries on for every wave past the end of the list. The first two rows
  * are what a chapter opens on and are pinned by the browser scenarios; the ranged trio
  * join from wave 3 on, so a player meets a shooter before a whole pack shoots back,
- * and meets a healer only once the pack already has wounded bodies worth mending.
+ * and meets a healer only once the pack already has wounded bodies worth mending. The
+ * two marks join from wave 4 on, one row behind the trio: a player has already been
+ * shot at by something that stops, so something that shoots from a moving circle and
+ * something that shoots from across the room both arrive as a twist on a known threat
+ * rather than as two new things to learn at once.
  */
 export const PACKS: readonly (readonly string[])[] = [
   // Two bodies that walk at you, then the first thing that does not.
   ['chaser', 'swarmling', 'chaser', 'swarmling', 'charger'],
   ['swarmling', 'chaser', 'charger', 'exploder', 'chaser'],
   ['charger', 'swarmling', 'exploder', 'shooter', 'chaser', 'splitter'],
-  ['charger', 'exploder', 'armored', 'shooter', 'splitter', 'grenadier'],
-  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'exploder'],
-  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'charger', 'armored', 'shooter', 'grenadier', 'healer'],
+  ['charger', 'exploder', 'armored', 'shooter', 'sniper', 'splitter', 'grenadier', 'orbiter'],
+  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'sniper', 'exploder', 'orbiter'],
+  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'sniper', 'charger', 'armored', 'shooter', 'grenadier', 'healer', 'orbiter'],
 ];
 
 /** The only archetype the wave spawner falls back to if a recipe names nothing else. */
@@ -135,9 +147,12 @@ export const DEFAULT_ENEMY = 0;
  * is the whole skill of the pair. The ranged trio then punishes *aiming at nothing*:
  * the shooter and the grenadier make standing still at range a losing trade, and the
  * healer is the reason the pack you are shooting takes longer to die than its HP says
- * — its 6 XP is priced for the kill-first answer.
+ * — its 6 XP is priced for the kill-first answer. The two marks punish the same standing
+ * still from further off: the sniper takes the shot you can see coming for three quarters of
+ * a second, and the orbiter takes it while walking a circle, so neither is answered by
+ * holding a corner.
  */
-export const ENEMIES: readonly EnemyDef[] = [
+const ENEMIES_CORE: readonly EnemyDef[] = [
   {
     id: 'chaser',
     faction: 'swarm',
@@ -554,6 +569,16 @@ export const ENEMIES: readonly EnemyDef[] = [
     accent: '#F2B233',
   },
 ];
+
+/**
+ * The table the sim and the renderer actually read: the thirteen rows above plus the two
+ * marks, which are authored in `enemiesA.ts` beside the behaviour they share.
+ *
+ * One table on purpose. `ENEMY_BY_ID` below, the wave recipes, the bench's load and the
+ * hit query's padding all walk this list, so an archetype that lived in a second table
+ * would be missing from whichever of those four did not know to look twice.
+ */
+export const ENEMIES: readonly EnemyDef[] = [...ENEMIES_CORE, ...ENEMIES_A];
 
 /** Id to table index, built once so a recipe or a split can name an archetype. */
 export const ENEMY_BY_ID: Readonly<Record<string, number>> = (() => {

@@ -199,25 +199,38 @@ hand — because `forge-scenarios.json` has no step that evaluates JavaScript (i
 vocabulary is click, fill, press, wait, hold, mouse, shot, state) and no key grants a
 weapon.
 
-### An enemy — `src/content/enemies.ts`, read by `src/sim/systems/enemies/`
+### An enemy — `src/content/enemies.ts` (+ `enemiesA.ts`), read by `src/sim/systems/enemies/`
 
-Add an `EnemyDef`, and if the movement is genuinely new add its `ai` id to `AI_IDS` and one
-function to the `AI` table in `src/sim/systems/enemies/behaviours.ts` — the table has to
-cover every id, so a missing behaviour is a typecheck error rather than an enemy that
-quietly stands still. The fields with behaviour behind them are `hp`, `speed`, `radius`,
+Add an `EnemyDef` to the table — the core thirteen live in `enemies.ts`, later archetypes in
+`enemiesA.ts`, and `ENEMIES` (the only thing anyone else imports) is both spread together —
+and if the movement is genuinely new add its `ai` id to `AI_IDS` and one function to the `AI`
+table in `src/sim/systems/enemies/behaviours.ts` — the table has to cover every id, so a
+missing behaviour is a typecheck error rather than an enemy that quietly stands still. A new
+behaviour gets its own file under `src/sim/systems/enemies/` rather than being appended to the
+file that already holds a range of them: `marksmen.ts` holds the two bodies that share a
+locked sight line, `rushers.ts` the ones that commit to a dash, `support.ts` the ones that
+buff. What a body draws is a separate choice: `mesh` names a recipe in `SHAPES`
+(`src/render/meshes/shapes.ts`), which `tests/unit/meshes.test.ts` pins by triangle count, so
+a new id needs its cost added there as well as its recipe.
+
+The fields with behaviour behind them are `hp`, `speed`, `radius`,
 `armor`, `xp` (the shard the body drops) and `params`: `sepRadius`/`sepPush` for crowd
 separation through the spatial hash, `touchRange`/`touchDamage` for contact damage, which
 one i-frame window caps to a single hit however many bodies arrive. A behaviour's own
 numbers also live in `params` and are documented where the behaviour reads them — the
-ranged trio's band edges, wind-up, bolt speed/damage/life, lob range/arc speed/blast and
-heal range/beat/amount included.
+ranged bodies' band edges, orbit radius, wind-up, bolt speed/damage/life, lob range/arc
+speed/blast and heal range/beat/amount included.
 
 Ranged bodies spend themselves through the shared `enemyShots` pool (cap 512) that
 `src/sim/systems/enemyProjectiles.ts` flies after the enemy pass: a bolt is the segment it
 swept this tick and a grenade bursts at the end of its arc, exactly at the point its
-telegraph ring was drawn. Both respect the player's i-frames — against an invulnerable
-player a round passes through rather than being absorbed — and a telegraphed attack always
-buys the player the DESIGN.md 400 ms of warning before it lands.
+telegraph ring was drawn. A sight-line body writes its aim into `fx`/`fy` the tick its tell
+starts and then does not steer, so the line the renderer draws (a tube, for anything in
+`SIGHT_LINES` in `src/render/telegraphs.ts`) is the bearing the round will take — the lead it
+takes is one tick of the player's own velocity, never a prediction of a turn he has not made.
+Both respect the player's i-frames — against an invulnerable player a round passes through
+rather than being absorbed — and a telegraphed attack always buys the player the DESIGN.md
+400 ms of warning before it lands.
 
 To make the archetype actually *arrive*, it has to be in the chapter's data two ways at most:
 in a `PACKS` row (the drumbeat, which fills the gaps and walks those recipes in order, so a
