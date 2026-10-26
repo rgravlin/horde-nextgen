@@ -19,6 +19,13 @@
  * 1,500 rounds in the air, 600 shards, 8,000 particles and 16 lights, which is the
  * picture the brief asks the game to hold.
  *
+ * The load's *shape* comes from `src/game/bench.ts` — the counts, which weapons have a
+ * flight, and the scatter that spreads them out — because the two benches only mean
+ * something side by side. The headless number is what a tick of the rules costs, the
+ * browser number is what a frame of the game costs, and the gap between them is a
+ * draw-path question; that comparison is worth nothing if the two are not measuring the
+ * same pile.
+ *
  * The floor is under the load on purpose. Cover is what makes a horde expensive: every
  * body asks the prop grid one or two questions a tick, and a bench on open arena measures
  * a fight the shipped chapters do not have. `--floor=none` drops it when you want the two
@@ -32,6 +39,7 @@
 import { writeFileSync } from 'node:fs';
 
 import { ENEMIES } from '../src/content/enemies';
+import { BENCH_TARGET, FLYING_WEAPONS, scatter } from '../src/game/bench';
 import { WEAPONS } from '../src/content/weapons';
 import { createInputFrame } from '../src/sim/input';
 import { LIGHT_CAP, PARTICLE_CAP } from '../src/sim/fx';
@@ -40,11 +48,11 @@ import { spawnEnemy } from '../src/sim/systems/enemies';
 import { startChapter } from '../src/sim/systems/levels';
 import { alloc, createWorld, release, type Pool, type World } from '../src/sim/world';
 
-/** The headline load, from TECH.md's performance target. */
-const TARGET_ENEMIES = 1000;
-const TARGET_SHOTS = 1500;
-const TARGET_SHARDS = 600;
-const TARGET_PARTICLES = 8000;
+/** The headline load, from TECH.md's performance target, shared with the browser bench. */
+const TARGET_ENEMIES = BENCH_TARGET.enemies;
+const TARGET_SHOTS = BENCH_TARGET.shots;
+const TARGET_SHARDS = BENCH_TARGET.shards;
+const TARGET_PARTICLES = BENCH_TARGET.particles;
 
 /** Ticks measured per run, after the warm-up. */
 const DEFAULT_TICKS = 600;
@@ -98,21 +106,6 @@ function readArgs(argv: string[]): Flags {
 }
 
 /**
- * Deterministic scatter for the bench's own setup.
- *
- * The bench must not draw from `world.rng`: the load has to be the same shape every run,
- * or the two halves of a before/after comparison are two different fights, and a setup
- * that consumed the stream would change the fight it is meant to be timing.
- */
-function scatter(i: number, salt: number): number {
-  let h = (i * 2654435761 + salt * 40503) | 0;
-  h ^= h >>> 13;
-  h = Math.imul(h, 1274126177);
-  h ^= h >>> 16;
-  return (h >>> 0) / 4294967295;
-}
-
-/**
  * Empty a pool back to nothing, so the next seed starts from the target count.
  *
  * Releasing rather than reallocating keeps the free lists intact and allocates nothing:
@@ -142,12 +135,11 @@ function seedShots(w: World, n: number): void {
   for (let k = 0; k < n; k++) {
     const slot = alloc(shots);
     if (slot < 0) return;
-    const weapon = k % WEAPONS.length;
+    // Only the guns with a flight are seeded. A weapon whose `speed` is 0 resolves inside the
+    // tick it is loosed (hitscan, beam, chain) and has no round in the air to time, so a pool
+    // slot holding one is a slot that costs nothing — which is the opposite of what a load is.
+    const weapon = FLYING_WEAPONS[k % FLYING_WEAPONS.length];
     const def = WEAPONS[weapon];
-    // A gun whose `speed` is 0 resolves inside the tick it is loosed (hitscan, beam,
-    // chain) and has no flight to time; giving it a velocity would invent a flight the
-    // weapon does not have, so those seeds are skipped rather than faked.
-    if (!(def.speed > 0)) continue;
     const a = scatter(k, 3) * Math.PI * 2;
     const ring = 1 + scatter(k, 4) * 6;
     shots.x[slot] = w.player.x + Math.cos(a) * ring;

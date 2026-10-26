@@ -16,10 +16,33 @@ Run them in the repo root:
     npm run test:e2e    # playwright test — browser scenarios, tests/e2e/** (Chromium + SwiftShader)
     npm run typecheck   # tsc --noEmit
     npm run build       # tsc --noEmit && vite build -> dist/
-    npm run bench       # tsx tools/bench.ts — headless sim perf gate
+    npm run bench       # tsx tools/bench.ts — headless sim perf gate (exits 1 over 4 ms/step)
 
 `npm run typecheck`, `npm test` and `npm run build` are the checks every change
 has to leave green.
+
+### Bench mode (in the browser)
+
+The page has the other half of the same measurement. `npm run bench` times one tick of the
+rules with no renderer; a browser run times whole frames *with* one, and the two numbers
+only mean something side by side — the gap between them is a draw-path question.
+
+    npm run dev         # then open http://127.0.0.1:5173/?bench=1000
+    npx playwright test tests/e2e/bench.spec.ts   # the same window, and it keeps the JSON
+
+`?bench=N` replaces the run with a held horde of N bodies, an invulnerable player and
+auto-fire, and records frame times for 20 s: `&seconds=` shortens that, `&chapter=` picks
+the floor (1-based, so `&chapter=5` benches the reactor). `window.__benchResults` holds the
+report once the window is spent — frame milliseconds, the code's own share of them, the load
+that survived to the end, and warnings saying so when the load was not held or the frame
+budget was blown — and `__forgeState()` reports `mode: "bench"` while it runs. The e2e spec
+writes the same report to `test-results/bench-results.json`, which is gitignored. The other
+way in is `__forgeDebug.bench(n, {seconds, chapter})`, which arms a window against a run
+already in progress.
+
+Nothing in the browser is gated on speed, deliberately: the CI box has no GPU, so a
+frame-time threshold there would be a test of SwiftShader rather than of the game. The gate
+lives in `npm run bench`, where 4 ms a step is measured with no GPU in the way.
 
 ## Where things live
 

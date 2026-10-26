@@ -81,7 +81,7 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
   levelUpChoices: [id…], fps, errors }
 ```
 - `errors` counts `window.onerror` and `unhandledrejection` events plus sim assertion failures.
-- `window.__forgeDebug` exposes `{ setSeed, spawn(type,n), grantXp(n), giveWeapon(id), bench(n) }` for scenarios.
+- `window.__forgeDebug` exposes `{ setSeed, spawn(type,n), grantXp(n), giveWeapon(id), bench(n, {seconds, chapter}) }` for scenarios.
 
 ## Performance
 - **Busiest moment:** 1,000 enemies on High (2,000 in the bench stress test), 1,500 projectiles, 8,000 particles, 600 XP shards, 16 lights.
@@ -89,7 +89,7 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
 - **Pools with hard caps:** enemies 2,048, projectiles 2,048, enemy projectiles 512, shards 1,024, particles 16k (GPU), damage numbers 64, lights 16.
 - **No per-tick allocations:** no closures, no `.map` or `.filter`, no new objects in `step()`.
 - **Draw calls:** about 1 per archetype mesh plus props (target under 150).
-- **Bench mode** (`?bench=1000` or `?bench=2000`) records frame times to JSON. The figures are reported, not gated.
+- **Bench mode** (`?bench=1000`, or `__forgeDebug.bench(n, {seconds, chapter, ...})`) runs a *held* load — the counts above topped back up every frame, an invulnerable player, the first second discarded — and times each frame twice: its end-to-end period and the code's own share of it, from a clock read inside the frame rather than from gaps between `requestAnimationFrame` stamps. Results go to `window.__benchResults` and to `test-results/bench-results.json`. Reported, not gated; `&seconds=` shortens the window and `&chapter=` picks the floor (1-based).
 
 ## Code patterns
 ```
@@ -126,4 +126,4 @@ src/main.ts   tests/unit/*.test.ts  tests/e2e/*.spec.ts  tools/bench.ts  public/
   5. Press Esc and assert `scene==="paused"` and that `tick` stays frozen. Press Esc again and assert the game resumes.
   6. Assert `errors===0` throughout.
 - **Second pass:** run the same scenario with `?gl=webgl2` and assert `backend==="webgl2"`.
-- Separate scenarios cover save/reload/resume, death leading to the summary, and the bench (it writes `bench-results.json` and reports only).
+- Separate scenarios cover save/reload/resume, death leading to the summary, and the bench (it writes `test-results/bench-results.json` and reports only — no frame-time threshold, because a software rasteriser's numbers are not the game's).

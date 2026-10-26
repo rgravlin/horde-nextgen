@@ -22,27 +22,53 @@ import '@fontsource/ibm-plex-mono/700.css';
 
 import { createEngine, type AudioEngine, type AudioGraph } from './audio/synth';
 import { createApp, snapshotSettings, type App, type ForgeState } from './game/app';
+import type { BenchResult } from './game/bench';
 import { defaultSettings, loadMeta, loadSettings, type Settings, type StorageLike } from './game/persistence';
 import { buildBinds } from './input/bindings';
 import { createView, type View, type ViewOptions } from './render/renderer';
 import { createHud } from './ui/hud';
 
-/** `?seed=N` for a reproducible run; `?gl=webgl2` to force the WebGL2 backend. */
-function readParams(): { seed: number; forceWebGL: boolean } {
+/**
+ * The run's knobs that come from the URL.
+ *
+ * `?bench=N` is the one that changes what the page *is*: a bench window rather than a game (see
+ * `src/game/bench.ts`). It has to arrive before the app is built because it replaces the run — a
+ * bench that had to be started by hand from a menu would never be run twice the same way — and
+ * `&seconds=` and `&chapter=` are there for the same reason: two runs of the same URL are two
+ * comparable numbers, and two runs of a different URL are not.
+ */
+function readParams(): {
+  seed: number;
+  forceWebGL: boolean;
+  bench: number;
+  seconds: number;
+  chapter: number;
+} {
   let seed = 1;
   let forceWebGL = false;
+  let bench = 0;
+  let seconds = 0;
+  let chapter = 0;
   try {
     const params = new URLSearchParams(location.search);
-    const raw = params.get('seed');
-    if (raw) {
+    const positive = (key: string): number => {
+      const raw = params.get(key);
+      if (raw === null) return 0;
       const parsed = Number(raw);
-      if (Number.isFinite(parsed) && parsed > 0) seed = parsed >>> 0;
-    }
+      return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+    };
+    seed = positive('seed') || 1;
     forceWebGL = params.get('gl') === 'webgl2';
+    // `?bench=1000` is a horde size; 0 or a nonsense value means no bench at all.
+    bench = positive('bench');
+    seconds = positive('seconds');
+    // `&chapter` is 1-based, the way every other place a chapter is named is, so `&chapter=10`
+    // is the tenth floor. It is clamped against the roster where the bench is armed.
+    chapter = positive('chapter');
   } catch {
     // A missing location (a non-browser import) keeps the defaults.
   }
-  return { seed, forceWebGL };
+  return { seed, forceWebGL, bench, seconds, chapter };
 }
 
 /**
@@ -220,7 +246,7 @@ function viewOptions(settings: Settings, forceWebGL: boolean): ViewOptions {
 async function boot(): Promise<void> {
   const canvas = document.getElementById('gl') as HTMLCanvasElement | null;
   const ui = document.getElementById('ui');
-  const { seed, forceWebGL } = readParams();
+  const { seed, forceWebGL, bench, seconds, chapter } = readParams();
 
   // The state hook is registered before anything is awaited, so `window.__forgeState`
   // is never absent — not while the renderer is still coming up, and not on a box
@@ -231,8 +257,18 @@ async function boot(): Promise<void> {
   const w = window as unknown as {
     __forgeState?: () => ForgeState;
     __forgeDebug?: App['debug'];
+    __benchResults?: BenchResult | null;
   };
   w.__forgeState = () => (app ? app.state() : idleState(backend));
+
+  // The bench report leaves the same way: a page that is not benching answers null, a page inside
+  // its window answers null, and a spent window answers with its numbers. A getter rather than a
+  // write, because nothing has to notice the moment the window closes — the scenario that waits
+  // for the report is the poll, and a per-frame check here would be a second one to keep in step.
+  Object.defineProperty(w, '__benchResults', {
+    get: () => app?.bench?.result ?? null,
+    configurable: true,
+  });
 
   // Errors are counted, never swallowed: an uncaught exception or a dropped promise
   // lands in `errors`, where the scenarios can see it (AGENTS.md).
@@ -288,6 +324,10 @@ async function boot(): Promise<void> {
     // Unlocks and history come in beside the settings for the same reason: the chapter grid and
     // the Runs table read them, and `src/game` may not reach for `window`.
     meta: storage === null ? undefined : loadMeta(storage, { note: (problem) => quiet.push(problem) }),
+    // The bench rig's clock. `performance.now` rather than the rAF stamp the loop is handed,
+    // because the rig measures *work between two reads* and needs a clock it can read a second
+    // time inside the frame; see the header of `src/game/bench.ts`.
+    now: () => performance.now(),
   });
 
   // A settings file that would not parse is counted rather than hushed (AGENTS.md): the tier
@@ -299,14 +339,46 @@ async function boot(): Promise<void> {
   }
   w.__forgeDebug = app.debug;
 
+  // `?bench=1000` replaces the run with a bench window, armed here rather than behind a menu or a
+  // key so the URL alone fixes what gets measured: two runs of one address are two comparable
+  // numbers. Arming happens before the loop starts, so the window's warm-up is this page's shader
+  // compile and its first floor layout, not the first half second of the timed sample.
+  if (bench > 0) {
+    app.debug.bench(bench, {
+      seconds: seconds || undefined,
+      chapter: chapter > 0 ? chapter - 1 : undefined,
+    });
+  }
+
   if (view) {
     view.resize();
     window.addEventListener('resize', () => view?.resize());
   }
 
+  // The finished window is said out loud once. It also sits in `window.__benchResults`, and the
+  // scenario that reads it is the machine that cares, but a person running the URL by hand has to
+  // get the report — and the warnings about whether the load was really on the floor — without
+  // opening the console first and knowing to ask.
+  let reported = false;
+  const reportBench = (): void => {
+    const rig = app?.bench ?? null;
+    if (rig === null || !rig.done || reported) return;
+    const r = rig.result;
+    if (r === null) return;
+    reported = true;
+    console.info(
+      `bench: ${r.backend}, ${r.frames} frames over ${r.seconds} s at ${r.target.enemies} bodies / ` +
+        `${r.target.shots} rounds / ${r.target.particles} particles — ${r.fps} fps, frame median ` +
+        `${r.frameMs.median} ms (of which ${r.workMs.median} ms is code), ${r.workOverBudget} frames whose ` +
+        `code went over the ${r.budgetMs} ms budget`,
+    );
+    for (const warning of r.warnings) console.warn(`bench: ${warning}`);
+  };
+
   const frame = (now: number): void => {
     try {
       app?.advance(now);
+      reportBench();
     } catch (error) {
       // A renderer that throws every frame would otherwise spam an uncaught error;
       // count it and keep the loop alive so the run is still inspectable.

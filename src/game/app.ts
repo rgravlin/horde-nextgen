@@ -29,6 +29,7 @@
  */
 
 import { ENEMIES } from '../content/enemies';
+import { LEVELS } from '../content/levels';
 import { POWERUPS } from '../content/powerups';
 import { WEAPONS } from '../content/weapons';
 import { BIND_DEFS, buildBinds, swapBinds, type BindAction, type BindTable } from '../input/bindings';
@@ -43,6 +44,7 @@ import { spawnEnemy } from '../sim/systems/enemies';
 import { awardXp, choosePick, reroll } from '../sim/systems/pickups';
 import { startChapter } from '../sim/systems/levels';
 import { createWorld, loadSlot, type World } from '../sim/world';
+import { createBenchRig, type BenchOptions, type BenchRig } from './bench';
 import { createClock, createFrameReport, runFrame } from './loop';
 import {
   autosaveDue,
@@ -197,7 +199,15 @@ export interface ForgeDebug {
   spawn(type: number, n: number): number;
   grantXp(n: number): void;
   giveWeapon(id: string): boolean;
-  bench(n: number): number;
+  /**
+   * Start a bench window at horde size `n` (`?bench=N` gets here straight off the URL).
+   *
+   * It restarts the run on the chosen floor rather than arming on top of whatever screen the page
+   * is on: a bench measures a fight, so it needs a playing scene and a floor under it. Returns the
+   * number of bodies on the floor when the window armed — less than `n` only when the pool said
+   * no, which is the load being short and worth seeing.
+   */
+  bench(n: number, options?: BenchOptions): number;
 }
 
 export interface App {
@@ -211,6 +221,15 @@ export interface App {
   readonly debug: ForgeDebug;
   /** Count a caught error; surfaces through `state().errors`. */
   noteError(): void;
+
+  /**
+   * The bench window this page is running, or null if it is playing a campaign.
+   *
+   * `main.ts` reads it to publish `window.__benchResults` once the window is spent: the rig keeps
+   * its own clock and its own samples, so nothing here has to know what a finished report looks
+   * like, and the page's only job is to hand the numbers to something that can print them.
+   */
+  readonly bench: BenchRig | null;
 
   /** The live settings, as they came off disk. The Settings tab reads and writes through this. */
   readonly settings: Settings;
@@ -282,6 +301,15 @@ export interface AppPorts {
    * elapsed time, and the player's four volume knobs.
    */
   audio?: AudioEngine | null;
+  /**
+   * A millisecond clock, for the bench rig.
+   *
+   * It comes in as a port for the same reason the storage does: `src/game` does not reach for a
+   * wall clock, so a headless test can drive a whole bench window with a counter and get exact
+   * frame times out of it. Left out, a rig falls back to `Date.now`, which is fine to run and too
+   * coarse to trust.
+   */
+  now?: () => number;
 }
 
 /** Rolling window for the fps estimate; below this it reports 0 ("still warming up"). */
@@ -355,6 +383,15 @@ export function createApp(ports: AppPorts): App {
   world.autoFire = settings.autoFire;
 
   let scene: SceneId = 'menu';
+
+  /**
+   * The bench window this page is running, if it is running one.
+   *
+   * Held on the app rather than in `main.ts` because the rig needs three moments of a frame —
+   * before the ticks, after them and after the draw — and only the shell knows where those are.
+   * `bench.ts` owns what a window measures; the shell only hands it the frame.
+   */
+  let rig: BenchRig | null = null;
 
   /**
    * Which screen a panel should hand back to.
@@ -523,8 +560,8 @@ export function createApp(ports: AppPorts): App {
    * Keep the storage in step with the run: the autosave clock, and the meta write when a
    * chapter or the run ends.
    *
-   * Three rules hold it together, and all three exist because a save that lands at the
-   * wrong moment is worse than one that does not land:
+   * Four rules hold it together, and all four exist because a save that lands at the wrong
+   * moment is worse than one that does not land:
    *
    * - A chapter's end is recorded, keyed by *which* chapter, and it is recorded before the
    *   autosave writes, because that write is the one that lets the next floor be resumed.
@@ -534,9 +571,16 @@ export function createApp(ports: AppPorts): App {
    * - A failed write is counted and the interval restarts anyway. Retrying a storage that
    *   refused (quota, private mode) every frame would spend the run's whole error budget on
    *   one bad write.
+   * - A bench page writes nothing, before its window ends or after. Its World is a rig rather than
+   *   a run: a thousand seeded bodies cost megabytes of storage, would blow the quota, and would
+   *   then hand the next player a Continue into a test bench. The window ending does not turn the
+   *   page back into a session — the floor stays full of seeded bodies — so the rule is about the
+   *   rig, not about whether it is still timing. Earning a chapter from a bench is the same
+   *   category of untruth, so the meta write waits for a run that was played.
    */
   function archiveRun(): void {
     if (storage === null || scene === 'menu') return;
+    if (rig !== null) return;
     const w = world;
 
     if (w.over || w.victory) {
@@ -686,7 +730,9 @@ export function createApp(ports: AppPorts): App {
       backend: ports.backend,
       tick: w.tick,
       chapter: w.chapter,
-      mode: 'campaign',
+      // A bench window is a mode rather than a scene: the scene is still `playing`, and what a
+      // scenario needs to be able to tell is that this page is measuring rather than being played.
+      mode: rig !== null ? 'bench' : 'campaign',
       player: {
         x: p.x,
         y: p.y,
@@ -741,10 +787,19 @@ export function createApp(ports: AppPorts): App {
       // button held through the transition is not spent on a card nobody chose.
       sampler.sample(frame, scene === 'levelup' ? 'cards' : 'play');
 
+      const played = scene === 'playing';
       let alpha = 0;
-      if (scene === 'playing') {
+      if (played) {
+        // A bench window pins its load before the ticks, so every tick in the frame is fought at
+        // the target rather than at whatever the last frame left, and the trigger comes from the
+        // rig rather than from whatever the pointer happens to be over.
+        rig?.hold(world, frame);
         runFrame(clock, nowMs, false, stepOne, report);
         alpha = report.alpha;
+        // A window does not stop for a card offer: the offer would freeze the sim and spend the
+        // rest of the window timing a menu, so the rig takes the first card here — before the
+        // scene is decided, which is what keeps the play scene running through it.
+        rig?.resolve(world);
         if (world.victory) scene = 'victory';
         else if (world.over) scene = 'summary';
         else if (world.pendingLevelUp) scene = 'levelup';
@@ -768,6 +823,13 @@ export function createApp(ports: AppPorts): App {
       audio?.frame(world, scene, report.dt, settings);
 
       hud?.tick(hudView);
+
+      // The bench window is booked last, after the draw, the sound drain and the overlay, so the
+      // time it records is the whole frame — the number a 60 fps target is a claim about — and not
+      // the simulation's share of it. It is called on the frozen scenes too: a window whose run
+      // stopped playing still has to be able to *end*, and a report that says "the load was not
+      // held" is worth more than a page that measures nothing.
+      rig?.frame(world, played ? report.steps : 0);
 
       frameTimes[frameTimeIndex] = report.dt;
       frameTimeIndex = (frameTimeIndex + 1) % FPS_SAMPLES;
@@ -839,6 +901,10 @@ export function createApp(ports: AppPorts): App {
     },
 
     state: () => buildState(),
+
+    get bench() {
+      return rig;
+    },
 
     noteError() {
       errorCount++;
@@ -931,8 +997,30 @@ export function createApp(ports: AppPorts): App {
         return true;
       },
 
-      bench(n) {
-        return this.spawn(0, n);
+      /**
+       * Arm a bench window at horde size `n`.
+       *
+       * It starts a run rather than arming over the screen it was called from: a window measures a
+       * fight, so it needs a playing scene and a floor under it — cover and hazards are part of the
+       * load, not scenery (a horde on open floor is a fight no chapter actually has). The chapter
+       * defaults to the floor the page is on, so a mid-run `bench(300)` benches where the player
+       * actually is.
+       */
+      bench(n, options) {
+        const horde = Math.max(1, Math.floor(n));
+        const asked = options?.chapter;
+        const chapter = clamp(
+          Math.floor(Number.isFinite(asked) ? (asked as number) : world.chapter),
+          0,
+          LEVELS.length - 1,
+        );
+        restartRun(chapter);
+        rig = createBenchRig({ ...options, enemies: horde, chapter, backend: ports.backend, now: ports.now });
+        // Prime it before the first frame. The fill is setup rather than measurement — and the
+        // expensive frame of a bench is the one that puts a thousand bodies down, so a window whose
+        // first sampled frame started from an empty arena would be timing the wrong thing twice.
+        rig.hold(world, frame);
+        return world.enemies.count;
       },
     },
   };
