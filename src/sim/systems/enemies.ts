@@ -1200,6 +1200,7 @@ function thornsPulse(w: World, thorns: number): void {
     if (dealt < 1) dealt = 1;
     enemies.hp[j] -= dealt;
     pushEvent(w, Ev.Hit, -1, j, enemies.x[j], enemies.y[j]);
+    pushEvent(w, Ev.Damage, Math.round(dealt), 0, enemies.x[j], enemies.y[j]);
     if (enemies.hp[j] <= 0) killEnemy(w, j);
   }
 }

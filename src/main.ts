@@ -21,8 +21,8 @@ import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
 import { createApp, type App, type ForgeState } from './game/app';
-import type { StorageLike } from './game/persistence';
-import { createView, type View } from './render/renderer';
+import { defaultSettings, loadSettings, type Settings, type StorageLike } from './game/persistence';
+import { createView, type View, type ViewOptions } from './render/renderer';
 import { createHud } from './ui/hud';
 
 /** `?seed=N` for a reproducible run; `?gl=webgl2` to force the WebGL2 backend. */
@@ -114,6 +114,33 @@ function showNoGpuPanel(root: HTMLElement, message: string): void {
   root.appendChild(panel);
 }
 
+/**
+ * The render knobs, read from the settings file.
+ *
+ * The tier, the resolution scale and the shake amount are settings (`persistence.ts`), not
+ * build-time constants, so they are read here and handed to the renderer as plain numbers:
+ * `quality.ts` and `shake.ts` stay free of storage and of `window`, which is what lets a unit
+ * test drive them. `quality: 'auto'` means "ask the machine", so it goes over as no opinion
+ * rather than as a tier — see `QualitySetting`.
+ *
+ * Anything wrong with the file is pushed into `quiet` rather than dropped, and the caller
+ * counts it once the app exists.
+ */
+function readSettings(storage: StorageLike | null, quiet: string[]): Settings {
+  if (storage === null) return defaultSettings();
+  return loadSettings(storage, { note: (problem) => quiet.push(problem) });
+}
+
+/** The settings plus the URL's backend override, in the shape `createView` takes. */
+function viewOptions(settings: Settings, forceWebGL: boolean): ViewOptions {
+  return {
+    forceWebGL,
+    quality: settings.quality === 'auto' ? undefined : settings.quality,
+    resolutionScale: settings.resolutionScale,
+    shake: settings.shake,
+  };
+}
+
 async function boot(): Promise<void> {
   const canvas = document.getElementById('gl') as HTMLCanvasElement | null;
   const ui = document.getElementById('ui');
@@ -142,10 +169,17 @@ async function boot(): Promise<void> {
   // The simulation waits for the renderer to resolve before it is built, so the
   // fixed-step clock's first frame is the first real frame: no time is banked while
   // `init()` runs, and a run's play time tracks real time from the first tick.
+  //
+  // The settings are read in that same pause, synchronously: one storage read, and the tier
+  // has to be known before the first frame is sized.
+  const storage = openStorage();
+  const quiet: string[] = [];
+  const settings = readSettings(storage, quiet);
+
   let view: View | null = null;
   if (canvas) {
     try {
-      const result = await createView(canvas, { forceWebGL });
+      const result = await createView(canvas, viewOptions(settings, forceWebGL));
       if (result.ok) view = result.view;
       else if (ui) showNoGpuPanel(ui, result.message);
     } catch (error) {
@@ -155,7 +189,15 @@ async function boot(): Promise<void> {
   backend = view ? view.backend : 'none';
 
   const hud = ui ? createHud(ui) : null;
-  app = createApp({ view, hud, seed, backend, storage: openStorage() });
+  app = createApp({ view, hud, seed, backend, storage });
+
+  // A settings file that would not parse is counted rather than hushed (AGENTS.md): the tier
+  // and the shake the player chose are gone, so this is not the run they asked for, and
+  // `errors` is the one place a check can see that.
+  for (const problem of quiet) {
+    console.warn(problem);
+    noteError();
+  }
   w.__forgeDebug = app.debug;
 
   if (view) {

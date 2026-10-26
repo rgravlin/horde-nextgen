@@ -28,10 +28,7 @@ import { PointLight, type Object3D } from 'three/webgpu';
 
 import type { EffectField } from '../sim/fx';
 
-import type { Quality } from './renderer';
-
-/** How many lamps each tier is allowed to spend (TECH.md "Quality tiers"). */
-const LAMPS_BY_QUALITY: Record<Quality, number> = { low: 0, medium: 8, high: 16 };
+import type { TierProfile } from './quality';
 
 /** Colour roles from DESIGN.md, keyed off the field's `lightKind`. */
 const MUZZLE_LIGHT = 0xbfefff;
@@ -46,10 +43,13 @@ export interface LightRig {
 /**
  * Bring up the lamp pool for one scene.
  *
- * The lamps are added once, and only ever moved and re-dimmed after that.
+ * The lamps are added once, and only ever moved and re-dimmed after that. How many a scene gets
+ * comes from the tier's profile rather than from a table here, so the number a tier spends is
+ * written down once (`quality.ts`) and every reader — this file, the shadow map, the particle
+ * batches — spends the same decision.
  */
-export function createLightRig(scene: Object3D, quality: Quality): LightRig {
-  const lampCount = LAMPS_BY_QUALITY[quality];
+export function createLightRig(scene: Object3D, profile: TierProfile): LightRig {
+  const lampCount = profile.lamps;
   const lamps: PointLight[] = [];
   for (let i = 0; i < lampCount; i++) {
     const light = new PointLight(OTHER_LIGHT, 0, 9, 2);

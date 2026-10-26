@@ -307,6 +307,20 @@ describe('settings', () => {
     expect(read.quality).toBe('low');
   });
 
+  it('knows every tier the renderer can draw', () => {
+    // `QUALITY_NAMES` is written out next to `Quality` on purpose, and this is the half that
+    // keeps the two lists honest: a tier the renderer has and the loader has not is a settings
+    // file that gets thrown away as corrupt.
+    const store = memoryStorage();
+    for (const tier of ['low', 'medium', 'high', 'ultra'] as const) {
+      const tuned = { ...defaultSettings(), quality: tier };
+      expect(saveSettings(store, tuned)).toBe(true);
+      const p = probe();
+      expect(loadSettings(store, p.sink)).toEqual(tuned);
+      expect(p.problems).toEqual([]);
+    }
+  });
+
   it('keeps what it recognises from a partial file and defaults the rest', () => {
     // A file written before an option existed is not a corrupt file. Refusing it would
     // quietly reset the volumes of anyone who had already changed them.
@@ -332,7 +346,7 @@ describe('settings', () => {
       '[1,2]',
       '{"master":"loud"}',
       '{"autoFire":"yes"}',
-      '{"quality":"ultra"}',
+      '{"quality":"insane"}',
       '{"shake":0.5,"ghost":1}',
     ];
 

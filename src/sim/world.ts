@@ -169,6 +169,19 @@ export const Ev = {
    * thing on screen even when it mends six bodies.
    */
   Heal: 13,
+  /**
+   * Damage landed on a body, for the floating numbers in DESIGN.md ("Motion").
+   *
+   * `a` is the HP actually taken off the body (after armour, so the number tells the
+   * truth about the armour), `b` is 1 when the crit roll paid off and 0 otherwise, and
+   * x/y where it landed. One event per hit rather than one per shot: a shotgun's eight
+   * pellets are eight numbers, and the pool is sixty-four wide precisely so that a
+   * number can be skipped when the screen is already full of them.
+   *
+   * A presentation feed only — no rule reads it — which is what lets the renderer drop
+   * numbers it has no room for and the headless run stay unchanged.
+   */
+  Damage: 14,
 } as const;
 
 /**

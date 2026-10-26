@@ -240,7 +240,7 @@ export function clearSave(storage: StorageLike, problems?: ProblemSink): void {
  */
 export type QualitySetting = Quality | 'auto';
 
-const QUALITY_NAMES: readonly QualitySetting[] = ['auto', 'low', 'medium', 'high'];
+const QUALITY_NAMES: readonly QualitySetting[] = ['auto', 'low', 'medium', 'high', 'ultra'];
 
 /**
  * What a player can set, and what the frame budget reads.

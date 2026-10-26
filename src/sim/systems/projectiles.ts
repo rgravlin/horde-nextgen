@@ -123,7 +123,8 @@ function damage(
   // actually took off the body. Both read neutral (crit 1, lifesteal 0) unless a run owns
   // the card, and at neutral neither draws a number nor writes the player — so a run with
   // no Weak Spot or Life Tap keeps the exact seeded streams it had before either existed.
-  const dealt = throughArmor(armor, dmg * rollCrit(w) * scale, scale);
+  const crit = rollCrit(w);
+  const dealt = throughArmor(armor, dmg * crit * scale, scale);
   enemies.hp[j] -= dealt;
   lifesteal(w, dealt);
 
@@ -131,6 +132,10 @@ function damage(
   // burst and a damage number without a per-hit object. Pushed before the kill so a
   // fatal hit still owns its impact.
   pushEvent(w, Ev.Hit, slot, j, enemies.x[j], enemies.y[j]);
+  // The number wants the HP the armour actually let through, and nothing under 1: a
+  // "0" floating over a body is not information, it is the noise DESIGN.md's merging
+  // rule exists to keep out.
+  if (dealt >= 1) pushEvent(w, Ev.Damage, Math.round(dealt), crit > 1 ? 1 : 0, enemies.x[j], enemies.y[j]);
 
   if (enemies.hp[j] <= 0) {
     killEnemy(w, j);
