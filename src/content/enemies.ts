@@ -65,6 +65,20 @@ export interface EnemyDef {
   readonly xp: number;
   readonly ai: AiId;
   /**
+   * Which shape the render layer draws it with.
+   *
+   * Presentation, kept here because what a body looks like is part of how it is read: the
+   * shapes are authored one per silhouette and shared by whoever needs them, so a new
+   * archetype that looks like an existing one costs one word rather than a new mesh. An id the
+   * render layer does not know falls back to the chaser's shape.
+   */
+  readonly mesh: string;
+  /**
+   * How much of that shape to use. 1 draws it at the size it was authored for; a smaller
+   * archetype that shares a shape names the fraction it wants instead.
+   */
+  readonly fit?: number;
+  /**
    * Numbers the behaviour reads. Keys are documented where the behaviour uses
    * them, and a behaviour owns its keys rather than sharing one flat namespace.
    */
@@ -127,6 +141,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'chaser',
     faction: 'swarm',
+    mesh: 'chaser',
     hp: 20,
     speed: 3.4,
     radius: 0.45,
@@ -144,6 +159,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'swarmling',
     faction: 'swarm',
+    mesh: 'mote',
     // Fast, cheap and useless alone: it arrives in a cloud of twenty and its whole
     // job is to make the player spend an area weapon or give up ground.
     hp: 9,
@@ -169,6 +185,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'charger',
     faction: 'swarm',
+    mesh: 'lancer',
     hp: 46,
     // Stalks slower than a chaser so the charge reads, and pays for the 13 m/s of it
     // with a wind-up long enough to step out of (DESIGN.md: at least 0.4 s of
@@ -201,6 +218,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'exploder',
     faction: 'reactor',
+    mesh: 'blister',
     // A bomb with legs. Slow and squishy; the danger is the 26 HP it pays out when it
     // goes, which it will do on death if nobody shoots it early.
     hp: 18,
@@ -228,6 +246,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'splitter',
     faction: 'reactor',
+    mesh: 'shell',
     // Heavy, slow and lurching: readable at a distance, and worth killing away from
     // the crowd, because the four bodies it leaves behind are faster than it is.
     hp: 44,
@@ -251,6 +270,8 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'splinter',
     faction: 'reactor',
+    mesh: 'mote',
+    fit: 0.8,
     // What a splitter leaves behind: half the body, most of the speed, and no split of
     // its own, so a run cannot cascade into an infinite crowd.
     hp: 7,
@@ -273,6 +294,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'armored',
     faction: 'foundry',
+    mesh: 'plate',
     // The wall. Its 7 of armour only counts inside ±60° of its facing, and its facing
     // follows where it is going rather than where you are, so walking past it — or
     // knocking it sideways and shooting the flat side — is what makes the armour a
@@ -304,6 +326,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'shooter',
     faction: 'cult',
+    mesh: 'stalk',
     // The first body that shoots back, and it is built to be read: a quarter-second
     // red flash before a bolt slow enough to walk out of, at a band it holds rather
     // than presses. Two pistol rounds kill it at that band, so the trade it forces is
@@ -337,6 +360,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'grenadier',
     faction: 'reactor',
+    mesh: 'hopper',
     // A bomber that kills the floor rather than the body: it rings the landing point
     // while the lob is in the air, so its damage is a place, announced, that you are
     // asked to leave. It pays a little less than the exploder's 26 because the lob
@@ -369,6 +393,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'healer',
     faction: 'cult',
+    mesh: 'censer',
     // The support body, and deliberately the thinnest one in the file: no attack, a
     // leash it kites at, and a two-second pulse that undoes a magazine of player
     // damage if it is left beside a wounded pack. Everything about it asks to be
@@ -411,6 +436,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'broodmother',
     faction: 'reactor',
+    mesh: 'sac',
     // The chapter-1 finisher: slow, and it does not hit you at all. Its damage is the
     // brood it keeps putting down — five broods of three splinters, then it runs out and
     // is just a fat body to shoot — so the answer is the same one the splitter taught,
@@ -446,6 +472,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'matron',
     faction: 'cult',
+    mesh: 'matron',
     // Two mechanics at once, which is the whole point of a mid-run boss: it holds the
     // shooter's band and mends the pack that arrives with it, so the player has to
     // answer the fan AND kill the support before the pack stops dying. The fan is three
@@ -487,6 +514,7 @@ export const ENEMIES: readonly EnemyDef[] = [
   {
     id: 'atlas',
     faction: 'foundry',
+    mesh: 'atlas',
     // The last answer for a run that has learned everything: it takes the armored's
     // plate and its circling, and adds a slam. It presses to a 5.5 m ring and walks it
     // fast, so its shield is always sideways and always moving; every two and a half

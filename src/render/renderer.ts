@@ -1,28 +1,30 @@
 /**
  * The renderer: what the sim looks like (ARCHITECTURE.md "Module map").
  *
- * One `WebGPURenderer` from `three/webgpu`, which is WebGPU first and picks its own
- * WebGL2 backend when the browser has no `navigator.gpu` — or when `?gl=webgl2`
- * forces it, which is how both paths get exercised (TECH.md "Render backend"). The
- * canvas is created by index.html and handed in, so this file never touches the DOM
- * beyond the canvas it was given.
+ * One `WebGPURenderer` from `three/webgpu`, which is WebGPU first and picks its own WebGL2
+ * backend when the browser has no `navigator.gpu` — or when `?gl=webgl2` forces it, which is how
+ * both paths get exercised (TECH.md "Render backend"). The canvas is created by index.html and
+ * handed in, so this file never touches the DOM beyond the canvas it was given.
  *
- * Everything here is cosmetic and read-only: it takes the World's pools and draws
- * them and never writes a game value back (ARCHITECTURE.md "Data flow"). If the
- * renderer cannot start, the game still runs — the caller shows a panel instead.
+ * What it draws is assembled from the other files in this folder and nothing more: `assets.ts`
+ * for the floor, the kit and the sky, `instancing.ts` for the horde and the rounds,
+ * `telegraphs.ts` for what the horde announces before it hits, `lights.ts` for the lamps the
+ * gunfire lights, `fxView.ts` for the sparks. This file owns the camera, the air, the player's
+ * own body, and the order the rest is called in.
+ *
+ * Everything here is cosmetic and read-only: it takes the World's pools and draws them and never
+ * writes a game value back (ARCHITECTURE.md "Data flow"). If the renderer cannot start, the game
+ * still runs — the caller shows a panel instead.
  */
 
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  CapsuleGeometry,
   Color,
-  ConeGeometry,
   DirectionalLight,
   FogExp2,
   Group,
   Mesh,
-  MeshBasicNodeMaterial,
   MeshStandardNodeMaterial,
   PCFShadowMap,
   PerspectiveCamera,
@@ -40,10 +42,15 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { chromaticAberration } from 'three/addons/tsl/display/ChromaticAberrationNode.js';
 
 import { levelAt } from '../content/levels';
+import { WEAPONS, type WeaponFamily } from '../content/weapons';
 import type { World } from '../sim/world';
+import { createPropView, loadAssets, type Assets, type PropView } from './assets';
 import { createFxView, type FxView } from './fxView';
 import { createBatches, flipToRender, type Batches } from './instancing';
+import { createLightRig } from './lights';
+import { glowMaterial, playerBody, playerTrim, weaponKit } from './meshes';
 import { createSceneryView, type SceneryView } from './scenery';
+import { createTelegraphView, type TelegraphView } from './telegraphs';
 
 /** What `__forgeState().backend` reports; 'none' means neither backend came up. */
 export type Backend = 'webgpu' | 'webgl2' | 'none';
@@ -114,11 +121,25 @@ const CAM_LEAD = 2;
 /** How much of the arena the floor covers; the world itself is 120x120 m. */
 const FLOOR_SIZE = 170;
 
-/** Colour roles from DESIGN.md, which are also the fog and sky colour. */
+/** Colour roles from DESIGN.md. Void is also the fog and the sky, which is the point. */
 const VOID = 0x0b0d14;
-const CONCRETE = 0x2a2e38;
 const GUNMETAL = 0x4a505c;
+const GUN_ORANGE = 0xff7a1a;
+const EMBER = 0xff4d2e;
 const ALIEN_CYAN = 0x2ef2ff;
+
+/**
+ * How much of the HDRI the room gets.
+ *
+ * The autoshop is a daylight garage and this is a night factory floor: at full strength the
+ * environment washes out every accent the palette is built on. What is left at this level is the
+ * sheen on the wet concrete and a little rim light on the kit, which is what DESIGN.md means by
+ * an environment map used "only for reflections and IBL", never as a backdrop.
+ */
+const ENV_INTENSITY = 0.4;
+
+/** The three gun shapes the player can be holding, in `weaponKit`'s order. */
+const FAMILIES: readonly WeaponFamily[] = ['guns', 'medieval', 'alien'];
 
 /** Scratch, reused every call: the aim ray-cast must not allocate per tick. */
 const _ndc = new Vector2();
@@ -234,27 +255,40 @@ export async function createView(
   renderer.shadowMap.enabled = shadows;
   renderer.shadowMap.type = PCFShadowMap;
 
+  /**
+   * The room's pieces, loaded once before anything is drawn.
+   *
+   * Awaited rather than swapped in mid-run because a flat grey arena that turns concrete a second
+   * later is a visible pop, and every one of these files is small. A file that does not arrive
+   * leaves its fallback in place (see `assets.ts`) and is counted, which is what keeps that
+   * downgrade loud instead of silent (AGENTS.md: an error is a value).
+   */
+  const assets: Assets = await loadAssets(renderer, quality, FLOOR_SIZE);
+
   const scene = new Scene();
   scene.background = new Color(VOID);
-  // Height fog over a dark floor: the arena fades into the sky colour instead of
-  // ending in a hard edge, and the fog colour is the Void so the two never fight.
+  // Height fog over a dark floor: the arena fades into the sky colour instead of ending in a
+  // hard edge, and the fog colour is the Void so the two never fight. The HDRI never becomes the
+  // background, which is why `background` is a colour and `assets.env` goes on `environment`.
   scene.fog = new FogExp2(VOID, quality === 'low' ? 0.02 : 0.016);
+  let errorCount = assets.missing.length;
+  if (assets.env !== null) {
+    try {
+      scene.environment = assets.env;
+      scene.environmentIntensity = ENV_INTENSITY;
+    } catch (error) {
+      errorCount++;
+      console.error('environment unavailable:', error);
+    }
+  }
 
-  // The camera height and setback come out of the 55° pitch and the 22 m distance,
-  // so the rig is the composition the brief asked for rather than an approximation.
-  const camera = new PerspectiveCamera(CAM_FOV, 16 / 9, 0.5, 220);
-  const camHeight = CAM_DISTANCE * Math.sin(CAM_PITCH);
-  const camBack = CAM_DISTANCE * Math.cos(CAM_PITCH);
-
-  const floor = new Mesh(
-    new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE, 1, 1).rotateX(-Math.PI / 2),
-    new MeshStandardNodeMaterial({ color: CONCRETE, roughness: 0.35, metalness: 0.05 }),
-  );
+  const floor = new Mesh(new PlaneGeometry(FLOOR_SIZE, FLOOR_SIZE, 1, 1).rotateX(-Math.PI / 2), assets.ground);
   floor.receiveShadow = shadows;
   scene.add(floor);
 
-  // One cool key light for the shadows and a low ambient fill: the arena is lit by
-  // its own gunfire, so the moon only has to keep the floor readable (DESIGN.md).
+  // One cool key light for the shadows and a low ambient fill: the arena is lit by its own
+  // gunfire, so the moon only has to keep the floor readable (DESIGN.md). The fill is dimmer
+  // than it used to be because the environment map now lights the diffuse too.
   const key = new DirectionalLight(0xbfd7ff, 1.6);
   key.castShadow = shadows;
   const mapSize = quality === 'high' ? 2048 : 1024;
@@ -268,24 +302,49 @@ export async function createView(
   key.shadow.bias = -0.0008;
   scene.add(key);
   scene.add(key.target);
-  scene.add(new AmbientLight(0x2b3a52, 0.55));
+  scene.add(new AmbientLight(0x2b3a52, 0.4));
 
-  // The player: a capsule for the body and a short cyan wedge at the muzzle, so
-  // aim reads at the camera height without needing a shadow to read it.
+  /**
+   * The player: a kit-bashed body, its emissive trim, and one gun shape per weapon family.
+   *
+   * Kit-bash rather than a capsule so the player is built from the same part-based idiom as the
+   * horde (DESIGN.md "Player and weapons"), and three guns exist so the family reads from the
+   * camera without checking the HUD. Only the one being held is drawn.
+   */
   const playerRig = new Group();
   const body = new Mesh(
-    new CapsuleGeometry(0.4, 1.0, 6, 12),
+    playerBody(),
     new MeshStandardNodeMaterial({ color: GUNMETAL, roughness: 0.45, metalness: 0.2 }),
   );
-  body.position.y = 0.9;
   body.castShadow = shadows;
-  const marker = new Mesh(
-    new ConeGeometry(0.16, 0.5, 5).rotateZ(-Math.PI / 2).translate(0.75, 0, 0),
-    new MeshBasicNodeMaterial({ color: ALIEN_CYAN }),
-  );
-  marker.position.y = 1.15;
-  playerRig.add(body, marker);
+  const trim = new Mesh(playerTrim(), glowMaterial(ALIEN_CYAN, 2.2));
+  const kits = weaponKit();
+  const gunMeshes = [
+    new Mesh(kits.guns, glowMaterial(GUN_ORANGE, 2.2)),
+    new Mesh(kits.medieval, glowMaterial(EMBER, 2.2)),
+    new Mesh(kits.alien, glowMaterial(ALIEN_CYAN, 2.2)),
+  ];
+  playerRig.add(body, trim, ...gunMeshes);
   scene.add(playerRig);
+
+  /** Which gun is on show; -1 until the first frame picks one. */
+  let shownGun = -1;
+
+  /**
+   * The lamps the gunfire lights (TECH.md: up to 16 pooled point lights, which do not cast
+   * shadows).
+   *
+   * Built once, against the tier rather than the World: the pool's size is a quality decision
+   * (16 at High, 8 at Medium, none at Low), and adding or removing a light rebuilds the scene's
+   * lighting layout, so it is not something a restart gets to do.
+   */
+  const lights = createLightRig(scene, quality);
+
+  // The camera height and setback come out of the 55° pitch and the 22 m distance,
+  // so the rig is the composition the brief asked for rather than an approximation.
+  const camera = new PerspectiveCamera(CAM_FOV, 16 / 9, 0.5, 220);
+  const camHeight = CAM_DISTANCE * Math.sin(CAM_PITCH);
+  const camBack = CAM_DISTANCE * Math.cos(CAM_PITCH);
 
   /**
    * The post chain: bloom, then the chromatic punch, then tone mapping, in one
@@ -303,7 +362,6 @@ export async function createView(
    * player loses the grade and keeps the game.
    */
   let pipeline: RenderPipeline | null = null;
-  let errorCount = 0;
   if (quality !== 'low') {
     try {
       const scenePass = pass(scene, camera);
@@ -321,16 +379,20 @@ export async function createView(
   }
 
   /**
-   * Everything drawn out of the World's pools, one set per World.
+   * Everything drawn out of one World's pools, rebuilt when the World changes.
    *
-   * A restart builds a new World with new pools, so the layers are rebuilt against it —
-   * and the old set is taken out of the scene and disposed rather than left under the new
-   * one, because a run restarted twenty times should not pay for twenty arenas.
+   * A restart builds a new World with new pools, so the layers are rebuilt against it — and the
+   * old set is taken out of the scene and disposed rather than left under the new one, because a
+   * run restarted twenty times should not pay for twenty arenas.
    */
   interface Kit {
+    /** The World these layers read; changing it is what a restart looks like from here. */
+    world: World;
     batches: Batches;
     fx: FxView;
-    scenery: SceneryView;
+    props: PropView;
+    hazards: SceneryView;
+    telegraphs: TelegraphView;
     group: Group;
   }
   let kit: Kit | null = null;
@@ -357,9 +419,14 @@ export async function createView(
     const group = new Group();
     scene.add(group);
     return {
-      batches: createBatches(group, world),
-      fx: createFxView(group, quality),
-      scenery: createSceneryView(group, world, quality),
+      world,
+      // Cover before the horde so the crowd reads against it, and the two flat layers last: a
+      // warning drawn under a body is a warning nobody sees.
+      props: createPropView(group, assets, quality),
+      hazards: createSceneryView(group, world),
+      batches: createBatches(group, world, quality),
+      telegraphs: createTelegraphView(group),
+      fx: createFxView(group),
       group,
     };
   }
@@ -384,7 +451,7 @@ export async function createView(
 
       // Built once against the pools of the World first drawn; a restart builds a
       // new World, so the layers have to be rebuilt against its pools.
-      if (kit === null || kit.batches.layers[0].pool !== world.enemies) {
+      if (kit === null || kit.world !== world) {
         kit = buildKit(world);
       }
 
@@ -395,14 +462,31 @@ export async function createView(
         applyTint(scene, key, world.chapter);
       }
 
-      kit.batches.sync(alpha);
-      kit.scenery.sync(world);
-      kit.fx.sync(world);
-
       const p = world.player;
+
+      // Each layer reads the pools at `alpha`, so the whole crowd lands between the last two
+      // ticks instead of one frame behind them (TECH.md "Simulation and rendering").
+      kit.props.sync(world);
+      kit.hazards.sync(world);
+      kit.batches.sync(world, alpha, dt);
+      kit.telegraphs.sync(world, dt);
+      kit.fx.sync(world.fx);
+      lights.sync(world.fx, p.x, p.y);
+
       playerRig.position.set(p.x, 0, flipToRender(p.y));
       playerRig.rotation.y = Math.atan2(p.aimY, p.aimX);
       playerRig.visible = p.alive;
+
+      // The gun follows the hand rather than the frame: the shape only changes when a weapon is
+      // picked up, so this is one comparison and, on the rare frame that differs, two writes.
+      const hand = world.slots[world.activeSlot];
+      const held = hand === undefined ? -1 : hand.weapon;
+      const gun = held >= 0 && held < WEAPONS.length ? WEAPONS[held].family : 'guns';
+      const gunAt = FAMILIES.indexOf(gun);
+      if (gunAt !== shownGun) {
+        for (let i = 0; i < gunMeshes.length; i++) gunMeshes[i].visible = i === gunAt;
+        shownGun = gunAt;
+      }
 
       if (orbit) {
         // Title screen: a slow drift around the arena, which is the only reason a
