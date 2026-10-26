@@ -8,6 +8,12 @@
  * `melee`, `chain` and `orb`, the last four in `projectiles.ts`. A weapon naming a
  * kind the sim has no path for would simply not shoot, which is why the kinds are
  * declared before they are used and pinned in tests/unit/weapons-a.test.ts.
+ *
+ * `homing` is the one field that is a flight modifier rather than a delivery path: it
+ * bends the path a kind already has, so it needs no new branch in `fire` and no new
+ * renderer batch. The eighteen entries below are what a run can find in a chest or on a
+ * level-up card, and each one is written against a job — a crowd, a single fast body, a
+ * plate, a lane at range — that at least one of the others does worse.
  */
 
 export type WeaponFamily = 'guns' | 'medieval' | 'alien';
@@ -165,7 +171,15 @@ export interface WeaponDef {
   readonly chainRadius?: number;
   /** m/s a singularity drags bodies inside `aoe` toward itself. */
   readonly pull?: number;
-  /** Turn rate in rad/s while homing. */
+  /**
+   * Turn rate in rad/s a flying shot may steer with while it hunts.
+   *
+   * Only the kinds that spend ticks in the air read it — `projectile`, `arc` and `orb` —
+   * and what they hunt for is the nearest live body within the seek radius `projectiles.ts`
+   * pins. A shot that never finds one flies the straight line the aim gave it and a shot
+   * that finds one still has to reach it before its flight time runs out, so `homing`
+   * buys a curve rather than a lock-on.
+   */
   readonly homing?: number;
   /** Projectiles one trigger pull spawns; each gets its own spread draw. */
   readonly pellets?: number;
@@ -181,6 +195,13 @@ export interface WeaponDef {
  * arm's length, the sniper and the longbow take the long shot and the armoured one,
  * the flail is the panic button once the ring closes, and the catapult breaks a
  * packed lane. DESIGN.md's family colours (Gun Orange, Ember/Oak) key off `family`.
+ *
+ * The eight entries added after those ten widen the same four jobs rather than
+ * repeating them: the SMG, the rifle and the LMG are three different answers to "how
+ * long is this fight going to be", the railgun and the crossbow are the long hard shot
+ * at two different ranges, the pike is the flail's opposite (one lane, twice the
+ * reach), the axes are a shotgun that keeps flying, and the disruptor follows the
+ * crowd instead of arriving where it used to be.
  */
 export const WEAPONS: readonly WeaponDef[] = [
   {
@@ -413,6 +434,207 @@ export const WEAPONS: readonly WeaponDef[] = [
     aoe: 3.2,
     pull: 7,
     mesh: 'gravGun',
+    sfx: 'singularity',
+  },
+  {
+    id: 'smg',
+    family: 'guns',
+    fire: 'projectile',
+    // The 5/s pistol fires too slowly to keep a cloud off you, and the shotgun that
+    // can is out of reach past 20 m. The SMG is the volume in between: rate 15 waits
+    // out five ticks per trigger pull, which on a 1/60 s grid is twelve rounds a
+    // second, and eleven damage a round is a hundred and thirty-two raw downrange of
+    // the muzzle with a pass-through on top, so a swarmling disc 13 m out is dead in a
+    // second and a half where the pistol needs three and a half. What that buys is
+    // honest: 0.06 of cone means a round at 15 m is more luck than aim, the falloff is
+    // over by 19 m, and against plate the same gun runs at half the rifle's speed —
+    // volume spends itself on soft bodies. A 40-round belt is three and a third seconds
+    // of trigger, and 1.6 s is short enough to survive.
+    rate: 15,
+    dmg: 11,
+    spread: 0.06,
+    speed: 52,
+    range: 19,
+    pierce: 1,
+    knockback: 1.2,
+    falloff: [10, 19, 0.55],
+    ammo: { mag: 40, reload: 1.6 },
+    mesh: 'smg',
+    sfx: 'gunLight',
+  },
+  {
+    id: 'assaultRifle',
+    family: 'guns',
+    fire: 'projectile',
+    // The generalist: nineteen damage at eight rounds a second, a cone tight enough to
+    // spend at range and two pass-throughs, which is what makes a file of bodies walking
+    // at you one problem instead of four. Measured, it is neither the family's fastest
+    // crowd answer nor its fastest plate answer, and that is what the entry is for — the
+    // gun whose numbers are never wrong. Inside 10 m the SMG puts more lead at a disc,
+    // and over a chapter the LMG's 120-round belt outlasts a 30-round magazine; what the
+    // rifle takes is everything in between, and it is the one belt gun that ends an
+    // armored before it closes, which is the duel the other two lose.
+    rate: 8,
+    dmg: 19,
+    spread: 0.04,
+    speed: 66,
+    range: 30,
+    pierce: 2,
+    knockback: 2,
+    falloff: [13, 30, 0.55],
+    ammo: { mag: 30, reload: 2.1 },
+    mesh: 'rifle',
+    sfx: 'gunHeavy',
+  },
+  {
+    id: 'lmg',
+    family: 'guns',
+    fire: 'projectile',
+    // Suppression, and the only gun here whose constraint is how long you are willing
+    // to stop moving for. A hundred and twenty rounds at ten a second is twelve seconds
+    // of continuous fire and a thousand five hundred and sixty raw damage, with three
+    // pass-throughs and reach out to 38 m: the fastest thing in the family at a crowd,
+    // and the answer to a chapter that simply does not stop coming. The price is a 5 s
+    // reload — longer than any wave — and the widest cone of any gun that claims to
+    // shoot at range, so past the 19 m where its falloff starts the last third of the
+    // belt is area denial rather than aim, and against a single armored body the same
+    // belt loses to the rifle. Reload it behind cover or do not start the fight.
+    rate: 10,
+    dmg: 13,
+    spread: 0.09,
+    speed: 70,
+    range: 38,
+    pierce: 3,
+    knockback: 1.2,
+    falloff: [19, 38, 0.55],
+    armorPen: 0.2,
+    ammo: { mag: 120, reload: 5.0 },
+    mesh: 'lmg',
+    sfx: 'gunHeavy',
+  },
+  {
+    id: 'railgun',
+    family: 'guns',
+    fire: 'hitscan',
+    // The sniper's job, taken further and paid for differently. Two hundred and forty
+    // damage with three quarters of a body's plate ignored is enough to end an armored
+    // with one shot through the front, which no other weapon here does, and nine
+    // bodies on one line die to the same trigger pull. Everything else about it is
+    // slow: half a shot a second, four in the tube, 3.4 s to find another four, and
+    // the round is gone at 55 m. Against a ring that has already closed it is the
+    // wrong gun, because there is no second shot to buy the space with.
+    rate: 0.5,
+    dmg: 240,
+    spread: 0,
+    speed: 0,
+    range: 70,
+    pierce: 8,
+    knockback: 3,
+    falloff: [24, 55, 0.55],
+    ammo: { mag: 4, reload: 3.4 },
+    armorPen: 0.75,
+    mesh: 'railgun',
+    sfx: 'gunSniper',
+  },
+  {
+    id: 'crossbow',
+    family: 'medieval',
+    fire: 'projectile',
+    // A heavier arrow: slower to cock than the longbow and twice as rude to a body
+    // that arrived wearing something. Fifty-two damage through 40% of a plate, four
+    // bodies on a line, a cone of 0.012 rad and a bolt that reaches 42 m means a lane
+    // laid out ahead of the player is one decision rather than four. It loses to the
+    // longbow everywhere the answer is burn, and to the sniper everywhere the answer is
+    // 60 m; what it owns is the 20-35 m band where a bolt that keeps flying through
+    // bodies is worth more than one that sets them alight.
+    rate: 1.7,
+    dmg: 52,
+    spread: 0.012,
+    speed: 74,
+    range: 42,
+    pierce: 3,
+    knockback: 3,
+    falloff: [20, 42, 0.62],
+    ammo: { mag: 5, reload: 2.3 },
+    armorPen: 0.4,
+    mesh: 'crossbow',
+    sfx: 'bowDraw',
+  },
+  {
+    id: 'pike',
+    family: 'medieval',
+    fire: 'melee',
+    // The flail is a 300° answer to a ring; a pike is a 37° answer to a lane, and
+    // that is the whole trade. 5.2 m of reach is four times the flail's and longer
+    // than anything that can touch the player, so a charger coming in gets met in its
+    // wind-up, and 12 m/s of shove staggers it for three ticks on top of the push.
+    // Up to six bodies on a line take it. What it cannot do is clean a ring — bodies
+    // to the sides and behind are outside the arc and free to walk in — so it is the
+    // gun for the corridor and the last stand in a doorway, and the wrong one for the
+    // open floor a flail was drawn for.
+    rate: 1.7,
+    dmg: 68,
+    spread: 0.32,
+    speed: 0,
+    range: 5.2,
+    pierce: 5,
+    knockback: 12,
+    falloff: [2.2, 5.2, 0.72],
+    ammo: { mag: 12, reload: 1.4 },
+    mesh: 'pike',
+    sfx: 'flailSwing',
+  },
+  {
+    id: 'throwingAxes',
+    family: 'medieval',
+    fire: 'projectile',
+    // Three axes per throw, each of which keeps going through two more bodies after
+    // the one it caught, on a cone wide enough to be honest about at 14 m. Damage does
+    // not fall off at all — a boarding axe is thrown the same way at 3 m and at 13 —
+    // and the 4 m/s shove plus the spread is what buys the space to wind up the next
+    // throw. It is the flail's range and none of its reliability: nine weapons' worth
+    // of damage in a 2.2 s reload, nothing that pierces plate, and past 14 m there is
+    // nothing to hit. Take it when the ring is closing and you would rather open a gap
+    // than fill one.
+    rate: 1.4,
+    dmg: 26,
+    spread: 0.16,
+    speed: 26,
+    range: 14,
+    pierce: 2,
+    knockback: 4,
+    falloff: [14, 14, 1],
+    ammo: { mag: 9, reload: 2.2 },
+    pellets: 3,
+    mesh: 'axes',
+    sfx: 'flailSwing',
+  },
+  {
+    id: 'disruptorOrb',
+    family: 'alien',
+    fire: 'orb',
+    // The singularity gun's flaw is in its own comment: it pops where it got to, not
+    // where the crowd is going. The disruptor is that flaw removed and paid for in
+    // size — a smaller burst (2.7 m), a weaker pull (5 m/s), and less damage per pop —
+    // plus the two things that make it a weapon rather than a smarter gravity well: it
+    // hunts, turning 2.4 rad/s toward whatever is nearest, and it eats armour, so the
+    // pop lands at 45% through a plate. Slow, and short-ranged, and three orbs leaves
+    // the cell dry; it wants a crowd it can lose itself in, and it is bad at anything
+    // fast enough to step aside before the orb finds out where it went.
+    rate: 0.85,
+    dmg: 44,
+    spread: 0,
+    speed: 18,
+    range: 17,
+    pierce: 0,
+    knockback: 4,
+    falloff: [17, 17, 1],
+    energy: { capacity: 100, perShot: 30, regenPerSec: 21 },
+    aoe: 3.0,
+    pull: 5,
+    armorPen: 0.45,
+    homing: 2.4,
+    mesh: 'disruptor',
     sfx: 'singularity',
   },
 ];

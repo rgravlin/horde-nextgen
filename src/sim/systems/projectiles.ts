@@ -20,6 +20,11 @@
  * - `orb` — a singularity that drags bodies inside its radius toward itself for its
  *   whole flight and detonates inside the same circle.
  *
+ * `homing` is a modifier rather than an eighth path: it applies to the three kinds that
+ * spend ticks in the air, and `steer` below rotates a flying shot's velocity toward the
+ * nearest live body inside its seek band, once a tick, before the segment it is about to
+ * sweep is tested — so what the segment test sees is the line the round really flew.
+ *
  * Nothing here allocates: candidates come out of the tick's shared `world.query`
  * buffer, the ray's march is a loop over probe windows rather than a list, the chain
  * remembers its own hit list in one module-scratch array, and the only events are the
@@ -511,10 +516,92 @@ function drag(w: World, def: WeaponDef, x: number, y: number): void {
 }
 
 /**
+ * Metres a hunting shot looks around itself for something to follow.
+ *
+ * Sized against the one thing that reads it: the disruptor's turn radius is its speed
+ * over its turn rate, 7.5 m, so a seek band narrower than that would only let a shot
+ * bend once it had already flown past whatever it was meant to be bending toward.
+ */
+const SEEK_RADIUS = 12;
+
+/**
+ * Turn a hunting shot toward the nearest body it can see, by at most `maxTurn`.
+ *
+ * A turn, not a lock-on: the rate comes from the def, so the shot keeps its speed and
+ * can still be walked out of — it bends the line the aim gave it rather than replacing
+ * the aim. What it bends toward is the closest live body inside `SEEK_RADIUS` of where
+ * the shot stands, read out of the tick's hash and the shared query buffer, which the
+ * hit test below then refills: one buffer per tick, and this is done with it before
+ * anything else looks at it.
+ *
+ * A body at 0 HP is skipped, so a bolt does not spend its curve on a corpse, and a
+ * shot with nothing near it flies straight, which is why a hunting weapon with no
+ * crowd in front of it still misses the way a non-hunting one does.
+ */
+function steer(w: World, i: number, maxTurn: number): void {
+  const shots = w.shots;
+  const enemies = w.enemies;
+
+  const x = shots.x[i];
+  const y = shots.y[i];
+  const found = queryRadius(
+    w.hash,
+    enemies.x,
+    enemies.y,
+    enemies.alive,
+    x,
+    y,
+    SEEK_RADIUS,
+    w.query,
+  );
+
+  let best = -1;
+  let best2 = Infinity;
+  for (let k = 0; k < found; k++) {
+    const j = w.query[k];
+    if (enemies.hp[j] <= 0) continue;
+
+    const dx = enemies.x[j] - x;
+    const dy = enemies.y[j] - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= best2) continue;
+    best2 = d2;
+    best = j;
+  }
+  if (best < 0 || !(best2 > EPS)) return;
+
+  const vx = shots.vx[i];
+  const vy = shots.vy[i];
+  const speed = Math.sqrt(vx * vx + vy * vy);
+  if (!(speed > EPS)) return;
+
+  // Both pairs are unit-length by construction, so `atan2` of their cross and dot is
+  // the signed angle between them: one call, and the sign carries which way to turn.
+  const reach = Math.sqrt(best2);
+  const tx = (enemies.x[best] - x) / reach;
+  const ty = (enemies.y[best] - y) / reach;
+  const hx = vx / speed;
+  const hy = vy / speed;
+  let turn = Math.atan2(hx * ty - hy * tx, hx * tx + hy * ty);
+  if (turn > maxTurn) turn = maxTurn;
+  else if (turn < -maxTurn) turn = -maxTurn;
+
+  // Rotating the velocity, not rewriting it toward the target, is what keeps the
+  // speed a charged or half-drawn shot left the muzzle with, and keeps the turn a
+  // rate rather than a snap.
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  shots.vx[i] = vx * c - vy * s;
+  shots.vy[i] = vx * s + vy * c;
+}
+
+/**
  * Move every live shot and let it hit, once per tick.
  *
  * A round's own velocity is what the sweep length and the falloff distance come off,
- * not the def's speed, so a half-drawn arrow flies its own flatter line.
+ * not the def's speed, so a half-drawn arrow flies its own flatter line. A round whose
+ * def declares `homing` gets that velocity steered first, so the segment tested below
+ * is the segment it actually swept.
  *
  * Two rules keep the segment test honest: a body entirely behind the segment start
  * is ignored, and a body already inside the round's disc when the segment began is
@@ -541,6 +628,8 @@ export function updateProjectiles(w: World): void {
       release(shots, i);
       continue;
     }
+
+    if (def.homing !== undefined && def.homing > 0) steer(w, i, def.homing * DT);
 
     const vx = shots.vx[i];
     const vy = shots.vy[i];

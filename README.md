@@ -162,6 +162,7 @@ Add a `WeaponDef`.
 | `chain`, `chainRadius` | for `chain`: how many bodies a bolt jumps to after the first, and the metres each jump may cross. A bolt will not spend two jumps on one body |
 | `aoe` | metres: the burst radius of an `arc` shell and of an `orb`; everything overlapping it takes full damage. For `orb` the same circle is the vacuum's reach |
 | `pull` | m/s a singularity drags bodies inside `aoe` toward itself while it flies, then pops them in that circle |
+| `homing` | rad/s a flying shot may steer with while it hunts. Only the three kinds that spend ticks in the air read it — `projectile`, `arc` and `orb` — and they turn toward the nearest live body inside a 12 m seek band, once a tick, before the segment they are about to sweep is tested. A shot that finds nobody flies the line the aim gave it and one that finds one still has to reach it before its flight time runs out: a curve, not a lock-on |
 | `pellets` | rounds one trigger pull spawns, each with its own `spread` draw — the shotgun's cone |
 | `armorPen` | fraction of the target's armour ignored, taken off before the `armor` subtraction |
 | `charge` | `{time, speed, dmg}`: a held trigger builds a draw and looses at a full draw or the moment the button comes up, so a panicked tap still fires, flatter and weaker |

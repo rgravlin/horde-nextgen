@@ -106,8 +106,10 @@ describe('weapon data', () => {
     }
   });
 
-  it('has the six slice weapons, then the four alien ones, in one table', () => {
+  it('names every hand in the roster, in the order the table holds them', () => {
     const ids = WEAPONS.map((d) => d.id);
+    // Pinned as a list rather than a count: a sixth alien hand is a decision somebody
+    // makes here, and a hand that quietly disappears takes its entry in this list with it.
     expect(ids).toEqual([
       'pistol',
       'shotgun',
@@ -119,6 +121,14 @@ describe('weapon data', () => {
       'chainLightningWand',
       'laserLance',
       'singularityGun',
+      'smg',
+      'assaultRifle',
+      'lmg',
+      'railgun',
+      'crossbow',
+      'pike',
+      'throwingAxes',
+      'disruptorOrb',
     ]);
 
     const byId = (id: string): WeaponDef => WEAPONS[WEAPONS.findIndex((d) => d.id === id)];
