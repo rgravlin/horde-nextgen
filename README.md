@@ -256,3 +256,21 @@ that came down inside cover or inside the eyeline. When you write a beat, leave 
 eight seconds inside `duration` and remember the pool stops at 2,048 bodies: a chapter that
 runs longer or spawns faster than its neighbours needs its `spawnRate` checked against a run,
 not against the table.
+### A song, and a sound — `src/audio/`
+
+The soundtrack is three `SongDef`s in `src/audio/songs.ts`, and `CHAPTER_SONGS` says which of
+the ten floors plays which. A track is a tempo, a scale, a register and a set of parts on the
+16-step grid; `src/audio/sequencer.ts` turns a part into notes at times and `src/audio/synth.ts`
+turns a note into oscillators. To add a tune, write a `SongDef` and put its id in the chapter
+grid — a floor gets one *song* and up to four *arrangements* of it, which is what a part's
+`from: n` means: it joins the mix at intensity tier `n`, so the arrangement thickens with the
+size of the horde rather than with the clock. A part marked `boss: true` plays only while the
+encounter is alive. `tests/unit/sequencer.test.ts` runs `checkSong` over every track, so a
+mis-sized bar or a note outside the scale is a failing test, not a strange noise.
+
+To add a sound effect, add a recipe name to `RECIPES` in `src/audio/sfx.ts`, a `RecipeTune`
+(gap, gain, reach) at the same index in `RECIPE_TUNE`, a voice builder at the same index in
+`eventVoices` in `synth.ts`, and the event that wants it in `recipeForEvent`. The gap and the
+reach are the sound: a noise that arrives more than about once per 45 ms, or further than about
+30 m away, is not information, and the mixer drops it on purpose. Audio never reads
+`world.rng` and never writes a `World` — `tests/unit/audio.test.ts` fails if either starts.

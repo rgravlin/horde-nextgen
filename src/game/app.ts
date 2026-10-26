@@ -68,6 +68,7 @@ import {
   type StorageLike,
 } from './persistence';
 import type { Hud, HudCommand, HudView } from '../ui/hud';
+import type { AudioEngine } from '../audio/synth';
 
 /**
  * The scenes this shell runs.
@@ -266,6 +267,21 @@ export interface AppPorts {
    * is one: `src/game` does not reach for `window`, so the scene machine runs in plain Node.
    */
   pads?: PadSource;
+  /**
+   * The soundtrack, built by the shell and driven from here.
+   *
+   * Audio comes in through a port for the same reason the gamepads do: `src/game` does not touch
+   * `window` or an `AudioContext`, so the scene machine still runs in plain Node. Left out, the
+   * game plays silent — which is a degraded run rather than a broken one, and why this is a port
+   * with a `null` rather than something the shell insists on.
+   *
+   * It is a *reader* of the frame, called after the sim has stepped however many ticks that frame
+   * was owed, so one call covers up to five ticks of events (ARCHITECTURE.md "Data flow": render
+   * and `audio.drain()` are the same phase of the frame). It gets the live `World`, the scene the
+   * frame ended on — that is how the music ducks on the cards and the summary — the frame's real
+   * elapsed time, and the player's four volume knobs.
+   */
+  audio?: AudioEngine | null;
 }
 
 /** Rolling window for the fps estimate; below this it reports 0 ("still warming up"). */
@@ -319,6 +335,7 @@ function clamp(v: number, lo: number, hi: number): number {
 export function createApp(ports: AppPorts): App {
   const view = ports.view;
   const hud = ports.hud;
+  const audio = ports.audio ?? null;
 
   /**
    * The three things a player can change, all read once and all live.
@@ -742,6 +759,14 @@ export function createApp(ports: AppPorts): App {
       archiveRun();
 
       if (view) view.draw(world, alpha, report.dt, scene === 'menu');
+
+      // Sound, in the same phase as the draw and after it, so the events it drains are the ones
+      // the steps this frame just ran wrote. It is called on the frozen scenes too: a pause is a
+      // reason for the music to get out of the way, not a reason for it to stop, and the duck is
+      // keyed off the scene it is handed. A throw inside the engine is caught there — audio gives
+      // up after one report rather than spending the run's error budget (see `src/audio/synth.ts`).
+      audio?.frame(world, scene, report.dt, settings);
+
       hud?.tick(hudView);
 
       frameTimes[frameTimeIndex] = report.dt;

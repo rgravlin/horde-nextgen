@@ -20,6 +20,7 @@ import '@fontsource/ibm-plex-mono/500.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
+import { createEngine, type AudioEngine, type AudioGraph } from './audio/synth';
 import { createApp, snapshotSettings, type App, type ForgeState } from './game/app';
 import { defaultSettings, loadMeta, loadSettings, type Settings, type StorageLike } from './game/persistence';
 import { buildBinds } from './input/bindings';
@@ -68,6 +69,79 @@ function openStorage(): StorageLike | null {
       },
     };
   } catch {
+    return null;
+  }
+}
+
+/**
+ * The soundtrack, or nothing.
+ *
+ * Like the renderer, audio is a best-effort device: a machine with no output, or a browser with
+ * no `AudioContext`, plays a silent game rather than a broken one, and the fact goes to the
+ * console rather than into `errors` — the same call `boot()` makes about a machine with neither
+ * WebGPU nor WebGL2, where a missing capability is not a fault the run made. A throw *after* the
+ * engine exists is different (a sound that cannot be built is a bug), so that one path reports
+ * through `fault` and lands in `__forgeState().errors`.
+ *
+ * The `AudioGraph` is spelled out rather than handed over as the raw context for two reasons.
+ * `resume()` returns a promise, and the engine calls and forgets it — an unhandled rejection
+ * would trip the `unhandledrejection` listener below and be counted sixty times a second on a
+ * machine that simply will not start audio. And a getter written here reads the live context
+ * every time, which is what the engine's per-frame "still suspended?" knock needs.
+ */
+function openAudio(warn: (problem: string) => void, fault: (problem: string) => void): AudioEngine | null {
+  if (typeof AudioContext === 'undefined') {
+    warn('audio: no AudioContext, playing silent');
+    return null;
+  }
+
+  let ctx: AudioContext;
+  try {
+    ctx = new AudioContext({ latencyHint: 'interactive' });
+  } catch (error) {
+    warn(`audio: no audio device (${String(error)}), playing silent`);
+    return null;
+  }
+
+  // Autoplay policy: a context is born suspended and only a gesture lets it run. Two one-shot
+  // listeners cover a keyboard and a mouse start; the engine's once-a-second `resume` knock
+  // covers a run driven by a script, where nobody presses anything.
+  const unlock = (): void => {
+    if (ctx.state !== 'running') void ctx.resume().catch(() => {});
+  };
+  window.addEventListener('pointerdown', unlock, { once: true });
+  window.addEventListener('keydown', unlock, { once: true });
+
+  const graph: AudioGraph = {
+    get currentTime() {
+      return ctx.currentTime;
+    },
+    get sampleRate() {
+      return ctx.sampleRate;
+    },
+    get destination() {
+      return ctx.destination;
+    },
+    get state() {
+      return ctx.state;
+    },
+    resume: () => {
+      void ctx.resume().catch(() => {});
+    },
+    createGain: () => ctx.createGain(),
+    createOscillator: () => ctx.createOscillator(),
+    createBufferSource: () => ctx.createBufferSource(),
+    createBuffer: (channels, length, sampleRate) => ctx.createBuffer(channels, length, sampleRate),
+    createBiquadFilter: () => ctx.createBiquadFilter(),
+    createStereoPanner: () => ctx.createStereoPanner(),
+    createDelay: (maxDelay) => ctx.createDelay(maxDelay),
+    createDynamicsCompressor: () => ctx.createDynamicsCompressor(),
+  };
+
+  try {
+    return createEngine(graph, { note: fault });
+  } catch (error) {
+    warn(`audio: the synth would not start (${String(error)}), playing silent`);
     return null;
   }
 }
@@ -191,9 +265,22 @@ async function boot(): Promise<void> {
   backend = view ? view.backend : 'none';
 
   const hud = ui ? createHud(ui) : null;
+
+  // The synth is built in the same pause, before the first frame: the graph, the noise buffer and
+  // the three songs exist by the time the title screen is drawn, so the first sound a player ever
+  // hears is not the sound of a compile.
+  const audio = openAudio(
+    (problem) => console.warn(problem),
+    (problem) => {
+      console.warn(problem);
+      noteError();
+    },
+  );
+
   app = createApp({
     view,
     hud,
+    audio,
     seed,
     backend,
     storage,
