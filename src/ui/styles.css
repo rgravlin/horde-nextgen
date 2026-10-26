@@ -1,0 +1,875 @@
+/*
+ * The overlay stylesheet: DESIGN.md's palette and type scale, nothing else.
+ *
+ * It replaces the earlier `theme.css` (same job, more screens to come) and is imported by
+ * `hud.ts`, so it arrives with the overlay rather than from `index.html`.
+ *
+ * Rules the brief pins and this file keeps to:
+ *
+ * - Neon glass: dark translucent panels, a 1px Alien Cyan hairline, cut corners. No CSS glow,
+ *   no blurred box-shadow, no scanlines — glow is the renderer's bloom's job (DESIGN.md
+ *   "Avoid"). Everything bright here is a flat fill.
+ * - Two families only: Chakra Petch for headings and labels, IBM Plex Mono for numbers. Set
+ *   once on `#ui` and inherited, with tabular numerals so a counter does not jitter.
+ * - 24px of safe margin, and the middle of the screen left clear: every readout is in a
+ *   corner, up the right edge, or along an edge.
+ * - Threat Red appears exactly once, on the boss chevrons, which is the one thing DESIGN.md
+ *   allows it on. The name plate is Synth Magenta.
+ *
+ * The scene rules at the bottom are the only state in this file: `#ui` carries `data-scene`,
+ * so switching screens is one attribute write per change (see hud.ts).
+ */
+
+#ui {
+  /* Palette (DESIGN.md). Void at 72% is the panel base. */
+  --void: rgba(11, 13, 20, 0.72);
+  --void-solid: #0b0d14;
+  --hairline: rgba(46, 242, 255, 0.34);
+  --text: #e8ecf5;
+  --dim-text: #8c93a6;
+  --track: rgba(232, 236, 245, 0.12);
+  --cyan: #2ef2ff;
+  --violet: #9b5cff;
+  --magenta: #ff2e97;
+  --hazard: #f2b233;
+  --heal: #3dff8a;
+  --threat: #ff2a3d;
+  /* The three weapon families, for the hands' borders. */
+  --guns: #ff7a1a;
+  --medieval: #ff4d2e;
+  --alien: #2ef2ff;
+
+  --margin: 24px;
+  --cut: 6px;
+
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  color: var(--text);
+  /* Clipping is a hard requirement: an overlay that scrolls sideways is a broken overlay.
+     Pointer events pass through to the canvas except on the controls that opt back in. */
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Neon glass. Cut corners, hairline, no glow. */
+#ui .panel,
+#ui .card,
+#ui .btn,
+#ui .slot,
+#ui .power {
+  background: var(--void);
+  border: 1px solid var(--hairline);
+  clip-path: polygon(
+    var(--cut) 0,
+    100% 0,
+    100% calc(100% - var(--cut)),
+    calc(100% - var(--cut)) 100%,
+    0 100%,
+    0 var(--cut)
+  );
+}
+
+#ui .hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: opacity 150ms ease-out;
+}
+
+/* A label is Chakra Petch, uppercase, wide-tracked; a number is mono. */
+#ui .label,
+#ui .key,
+#ui .power-label,
+#ui .slot-name,
+#ui .radar-range,
+#ui .card-kind {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+}
+
+/* The thin bar used by the wave clock and both gauges. */
+#ui .bar {
+  position: relative;
+  width: 160px;
+  height: 3px;
+  background: var(--track);
+  overflow: hidden;
+}
+
+#ui .fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  height: 100%;
+  width: 0;
+}
+
+#ui .fill.warn {
+  background: var(--hazard);
+}
+
+/* ── Top left: the radar ─────────────────────────────────────────────────────────────
+ * A 160px circle, painted by radar.ts. The disc is drawn (backdrop, rim, cross), so it
+ * needs no panel chrome; the caption under it is the readout, right-aligned so it never
+ * nudges the disc when the range text changes length. */
+#ui .radar {
+  position: absolute;
+  top: var(--margin);
+  left: var(--margin);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  width: 160px;
+}
+
+#ui .radar-map {
+  display: block;
+  /* The canvas backing store is 160 x deviceScale; this is where the 160 is pinned. */
+  width: 160px;
+  height: 160px;
+}
+
+#ui .radar-range {
+  padding: 1px 5px;
+  background: var(--void);
+  border: 1px solid var(--hairline);
+}
+
+/* The probe is running, so the map reaches further: magenta, per DESIGN.md's accent rule. */
+#ui .radar.probe .radar-range {
+  color: var(--magenta);
+  border-color: rgba(255, 46, 151, 0.45);
+}
+
+/* ── Top centre: chapter, wave clock, wave progress ──────────────────────────────── */
+#ui .wave {
+  position: absolute;
+  top: var(--margin);
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+#ui .wave-label {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* The clock is the one number in the panel, so it gets the counter size. */
+#ui .wave-clock {
+  min-width: 58px;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--hazard);
+}
+
+/* ── Top centre, under it: the encounter's plate ──────────────────────────────────
+ * Thin, half the screen wide, magenta plate (DESIGN.md: "a top-centre HP bar (thin, 50%
+ * of the screen width)"). Up only while an encounter body is on the floor. */
+#ui .boss {
+  position: absolute;
+  top: calc(var(--margin) + 48px);
+  left: 50%;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  width: 50vw;
+  min-width: 280px;
+  max-width: calc(100vw - 2 * var(--margin));
+  transform: translateX(-50%);
+}
+
+#ui .boss.on {
+  display: flex;
+}
+
+#ui .boss-name {
+  padding: 2px 8px;
+  background: var(--magenta);
+  color: var(--void-solid);
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+#ui .boss-bar {
+  flex: 1;
+  height: 6px;
+}
+
+#ui .fill.boss-fill {
+  background: var(--magenta);
+}
+
+/* ── Top right: score and kills ─────────────────────────────────────────────────── */
+#ui .score {
+  position: absolute;
+  top: var(--margin);
+  right: var(--margin);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  padding: 8px 12px;
+  text-align: right;
+}
+
+#ui .stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+#ui .score .stat {
+  min-width: 168px;
+}
+
+#ui .score b.num {
+  font-size: 18px;
+  font-weight: 500;
+}
+
+/* ── Bottom left: HP, shield, dash, level ────────────────────────────────────────
+ * 240x10, slim, never centred (DESIGN.md "Avoid: giant centred HP bars"). The shield
+ * rides on the same track because it is a second layer over the same resource. */
+#ui .vitals {
+  position: absolute;
+  bottom: calc(var(--margin) + 8px);
+  left: var(--margin);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#ui .hp {
+  position: relative;
+  width: 240px;
+  height: 10px;
+  background: var(--track);
+}
+
+#ui .fill.hp-fill {
+  background: var(--heal);
+}
+
+/* The shield starts where the health stops (hud.ts writes its `left`), so one bar says
+   both: how much flesh is left, and how much of it is armour over the flesh. */
+#ui .fill.shield-fill {
+  background: var(--cyan);
+  opacity: 0.85;
+}
+
+#ui .vitals .pip {
+  width: 8px;
+  height: 8px;
+  background: var(--track);
+}
+
+#ui .vitals .pip.ready {
+  background: var(--cyan);
+}
+
+#ui .level {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--violet);
+}
+
+/* ── Bottom right: the two hands ─────────────────────────────────────────────────
+ * Family border (DESIGN.md's family colours), the gauge the hand spends, and a reload
+ * dial in the corner. The inactive hand is dimmed rather than bordered differently, so
+ * the border stays a family fact and never a slot fact. */
+#ui .slots {
+  position: absolute;
+  right: var(--margin);
+  bottom: calc(var(--margin) + 8px);
+  display: flex;
+  gap: 8px;
+}
+
+#ui .slot {
+  position: relative;
+  width: 186px;
+  padding: 6px 8px 8px;
+  opacity: 0.45;
+}
+
+#ui .slot.active {
+  opacity: 1;
+}
+
+#ui .slot[data-family='guns'] {
+  border-color: rgba(255, 122, 26, 0.5);
+}
+
+#ui .slot[data-family='medieval'] {
+  border-color: rgba(255, 77, 46, 0.5);
+}
+
+#ui .slot[data-family='alien'] {
+  border-color: rgba(46, 242, 255, 0.5);
+}
+
+#ui .slot.active[data-family='guns'] {
+  border-color: var(--guns);
+}
+
+#ui .slot.active[data-family='medieval'] {
+  border-color: var(--medieval);
+}
+
+#ui .slot.active[data-family='alien'] {
+  border-color: var(--alien);
+}
+
+#ui .slot-name {
+  display: block;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+#ui .slot-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 1px 0 5px;
+}
+
+#ui .slot-tag {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+  /* One line, always. Wrapped, the two hands came out at different heights depending on
+     how many characters the ammo count needed, which reads as a broken panel. */
+  white-space: nowrap;
+}
+
+#ui .slot-ammo {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+#ui .slot.reloading .slot-ammo {
+  color: var(--hazard);
+}
+
+#ui .slot .bar {
+  width: 100%;
+}
+
+/* The gauge takes the hand's family colour, same as the border: an orange gauge inside a
+   cyan-bordered alien hand reads as two different weapons in one box. */
+#ui .fill.ammo-fill {
+  background: var(--guns);
+}
+
+#ui .slot[data-family='medieval'] .fill.ammo-fill {
+  background: var(--medieval);
+}
+
+#ui .slot[data-family='alien'] .fill.ammo-fill {
+  background: var(--cyan);
+}
+
+/* The reload dial. `--arc` is written by hud.ts in whole percents, so the sweep is the
+   real reload fraction rather than an animation that only looks like one. */
+#ui .reload-arc {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(
+    var(--hazard) calc(var(--arc, 0) * 1%),
+    var(--track) 0
+  );
+  opacity: 0;
+}
+
+#ui .slot.reloading .reload-arc {
+  opacity: 1;
+}
+
+/* ── Right edge: the power column ─────────────────────────────────────────────────
+ * Capped in height: fifteen rows of icons would run off both ends of the screen before
+ * it ran into anything, and the column is a readout, not a scroll region. */
+#ui .powers {
+  position: absolute;
+  top: 50%;
+  right: var(--margin);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  align-items: flex-end;
+  max-height: 62vh;
+  overflow: hidden;
+  transform: translateY(-50%);
+}
+
+#ui .power {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+#ui .pips {
+  display: flex;
+  gap: 3px;
+}
+
+#ui .pip {
+  width: 6px;
+  height: 6px;
+  background: var(--track);
+}
+
+#ui .pip.on {
+  background: var(--magenta);
+}
+
+#ui .pip.next {
+  background: rgba(255, 46, 151, 0.3);
+}
+
+#ui .power-time {
+  min-width: 28px;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: right;
+  color: var(--violet);
+}
+
+/* What the column left out. No panel around it: it is a caption about the list, not another
+   entry in it (see `POWER_ROWS` in hud.ts). */
+#ui .power.more {
+  gap: 0;
+  padding: 2px 2px;
+  color: var(--dim-text);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: none;
+  border: none;
+  clip-path: none;
+}
+
+/* ── The bottom edge: XP ────────────────────────────────────────────────────────── */
+#ui .xp {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 4px;
+  background: rgba(155, 92, 255, 0.16);
+}
+
+#ui .fill.xp-fill {
+  background: var(--violet);
+}
+
+/* ── Off-screen indicators ────────────────────────────────────────────────────────
+ * Both rows sit over the whole overlay, so a marker's transform starts at the middle of
+ * the screen: the negative margins centre its own box on the point hud.ts picked, which
+ * is why the transform written each frame never has to mention centring. Shapes differ
+ * (triangle vs chevron) as well as colours, per DESIGN.md. */
+#ui .edge {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+#ui .edge.on {
+  opacity: 1;
+}
+
+/* A crate: a solid Hazard triangle, the beacon colour. */
+#ui .edge.chest {
+  background: var(--hazard);
+  clip-path: polygon(50% 0, 100% 86%, 0 86%);
+}
+
+/* An encounter: a Threat Red chevron, four points and a notched back, so it reads as a
+   different mark from a crate's solid triangle and not only a different colour. The only
+   place Threat Red appears, and it is a threat, which is what DESIGN.md reserves it for.
+   (An earlier eight-point version self-intersected and came out as a smudge at 22px.) */
+#ui .edge.boss-marker {
+  background: var(--threat);
+  clip-path: polygon(50% 0, 100% 66%, 50% 36%, 0 66%);
+}
+
+/* ── Screens ─────────────────────────────────────────────────────────────────────
+ * Everything outside the four corners is one screen at a time, all left-aligned stacks
+ * or centred cards over the frozen scene. */
+#ui .menu,
+#ui .pause,
+#ui .summary {
+  position: absolute;
+  top: 22%;
+  left: var(--margin);
+  display: none;
+  width: min(380px, calc(100vw - 2 * var(--margin)));
+  padding: 20px;
+  pointer-events: auto;
+}
+
+#ui .title {
+  margin: 0 0 4px;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 64px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#ui .title::after {
+  content: '';
+  display: block;
+  width: 100%;
+  height: 2px;
+  margin-top: 10px;
+  background: linear-gradient(90deg, var(--magenta), var(--cyan));
+}
+
+#ui .subtitle {
+  margin: 14px 0 20px;
+  color: var(--dim-text);
+}
+
+#ui .head {
+  margin: 0 0 8px;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#ui .hint {
+  margin: 0 0 16px;
+  color: var(--dim-text);
+}
+
+#ui .stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+#ui .btn {
+  padding: 10px 16px;
+  color: var(--text);
+  font: inherit;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+#ui .btn:hover {
+  border-color: var(--cyan);
+}
+
+#ui .btn[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Stat tables (the run summary): 13px mono, keys dim, values tabular. */
+#ui .stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 18px;
+  font-size: 13px;
+}
+
+#ui .stats b.num {
+  font-weight: 500;
+}
+
+/* The "your browser can't do this" panel (main.ts), so the one fatal message is at
+   least legible instead of unstyled text over a black canvas. */
+#ui .no-gpu {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  max-width: 520px;
+  padding: 16px 20px;
+  background: var(--void);
+  border: 1px solid var(--hairline);
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
+/* ── Level-up ─────────────────────────────────────────────────────────────────────
+ * The playfield dims to 40% and three 280x380 cards sit centred (DESIGN.md). The dim is
+ * a sibling under the HUD, so the readouts stay legible over it. */
+#ui .dim {
+  position: absolute;
+  inset: 0;
+  display: none;
+  /* 60% of Void over the scene leaves the floor at about 40% brightness. */
+  background: rgba(11, 13, 20, 0.6);
+  pointer-events: none;
+}
+
+/* Full-screen flex wrapper rather than a `left:50%` box: an absolutely positioned element
+   sized by its content only gets the space from its `left` offset to the right edge, so a
+   50%-centred 872px card row would be squeezed into 640px and fold in half. Inset to the
+   edges and centred by the axis instead, it gets the whole viewport and wraps only when the
+   window really is narrower than three cards. Pointer events stay off the wrapper so the
+   gaps between cards still reach the canvas; the cards opt back in. */
+#ui .cards {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0 16px;
+  pointer-events: none;
+}
+
+/* Content-sized and centred, so the heading sits over the cards instead of stretching to
+   the screen edges and pulling the key hint away from them. */
+#ui .cards-head {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 0 2px;
+}
+
+#ui .cards-title {
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--magenta);
+}
+
+#ui .cards-hint {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+}
+
+#ui .card-row {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  /* Three fixed cards cannot fit a narrow window; wrapping beats clipping. */
+  flex-wrap: wrap;
+}
+
+#ui .card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 280px;
+  height: 380px;
+  padding: 18px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+#ui .card.empty {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The key that takes it, in the corner where the eye goes after the name. DESIGN.md wants
+   the choice readable in two seconds and keys 1/2/3 pick a card; a card that does not say
+   which key it is makes the player read the hint line and count from there. */
+#ui .card-key {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  min-width: 20px;
+  padding: 1px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--dim-text);
+  border: 1px solid var(--hairline);
+}
+
+/* The top edge carries the colour: permanent cyan, timed violet, curse magenta. The hue
+   is the choice on offer (a number that lasts, one that runs out, one you pay for). */
+#ui .card.stat {
+  border-color: rgba(46, 242, 255, 0.5);
+  background-image: linear-gradient(var(--cyan), var(--cyan));
+  background-position: top center;
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+}
+
+#ui .card.timed {
+  border-color: rgba(155, 92, 255, 0.5);
+  background-image: linear-gradient(var(--violet), var(--violet));
+  background-position: top center;
+  background-size: 100% 2px;
+  background-repeat: no-repeat;
+}
+
+/* A curse is hatched, per DESIGN.md, but as a texture under the text rather than a flood
+   over it: at the first strength the card was a magenta block and the two lines it had to
+   give away were the two you could not read. */
+#ui .card.curse {
+  border-color: rgba(255, 46, 151, 0.55);
+  background-image: repeating-linear-gradient(
+    135deg,
+    rgba(255, 46, 151, 0.14) 0 5px,
+    rgba(255, 46, 151, 0.02) 5px 10px
+  );
+}
+
+#ui .card-kind {
+  color: var(--magenta);
+  font-size: 12px;
+}
+
+#ui .card.stat .card-kind {
+  color: var(--cyan);
+}
+
+#ui .card.timed .card-kind {
+  color: var(--violet);
+}
+
+#ui .card-title {
+  padding-right: 26px;
+  font-family: 'Chakra Petch', 'IBM Plex Mono', sans-serif;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+}
+
+#ui .card-pips {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--track);
+}
+
+#ui .card-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+#ui .card-stats i {
+  font-style: normal;
+}
+
+#ui .card-stats .up {
+  color: var(--heal);
+}
+
+/* A downgrade is magenta, not Threat Red: the brief reserves that for telegraphs, and a
+   card you are about to take is the opposite of one. */
+#ui .card-stats .down {
+  color: var(--magenta);
+}
+
+/* Which tier this buys, pinned to the bottom so the card reads top to bottom: what it is,
+   how far it goes, what it changes, how far you have already taken it. */
+#ui .card-tier {
+  margin-top: auto;
+  padding-top: 9px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim-text);
+}
+
+#ui .cards-foot {
+  display: flex;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+/* Which screens are up. `data-scene` is the only state here. */
+#ui[data-scene='levelup'] .dim,
+#ui[data-scene='paused'] .dim,
+#ui[data-scene='summary'] .dim {
+  display: block;
+}
+
+#ui[data-scene='levelup'] .cards {
+  display: flex;
+}
+
+/* The power column is what the cards are choosing from, so on the choice screen it is
+   redundant; at narrow widths it would also be sitting under the cards. */
+#ui[data-scene='levelup'] .powers {
+  display: none;
+}
+
+/* The radar is a live map of what is near. On the two frozen, panel-covered screens it has
+   nothing left to say and the left panel would otherwise sit over its caption (the panel
+   starts at `top: 22%`, which on a short window climbs into the disc). Down here rather
+   than nudging the panel's `top`: the radar is the new element and the panel predates it. */
+#ui[data-scene='paused'] .radar,
+#ui[data-scene='summary'] .radar {
+  display: none;
+}
+
+#ui[data-scene='paused'] .pause,
+#ui[data-scene='summary'] .summary {
+  display: block;
+}
+
+#ui[data-scene='menu'] .menu {
+  display: block;
+}
+
+#ui[data-scene='menu'] .hud {
+  opacity: 0;
+}

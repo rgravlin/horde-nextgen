@@ -17,9 +17,10 @@
  *   they never pile up into clutter"), and a merge is a sum into a live number near the same
  *   point, which is also what keeps a shotgun's eight pellets reading as one event.
  *
- * The styling is inline rather than a class in `theme.css` because this file lives on the render
- * side of the render/ui line and must not reach across it for a stylesheet (ARCHITECTURE.md "Hard
- * rules"): one element, two colours and two sizes is not worth a dependency between the layers.
+ * The styling is inline rather than a class in `src/ui/styles.css` because this file lives on the
+ * render side of the render/ui line and must not reach across it for a stylesheet (ARCHITECTURE.md
+ * "Hard rules"): one element, two colours and two sizes is not worth a dependency between the
+ * layers.
  *
  * Like the rest of `render`, this is optional and guarded: with no host element — a headless run,
  * a unit test, a page without an overlay — it builds a layer that does nothing but count.
@@ -230,8 +231,8 @@ export function createNumbers(
   if (host !== null && hasDom) {
     root = document.createElement('div');
     root.className = 'numbers';
-    // Inline rather than in `theme.css`: see the header. `pointer-events: none` is not decoration
-    // — a layer that eats clicks would take the mouse-aim away from the game.
+    // Inline rather than in `src/ui/styles.css`: see the header. `pointer-events: none` is not
+    // decoration — a layer that eats clicks would take the mouse-aim away from the game.
     root.style.cssText =
       'position:absolute;inset:0;overflow:hidden;pointer-events:none;' +
       'font:600 14px/1 "IBM Plex Mono",ui-monospace,monospace;';
