@@ -56,12 +56,16 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
   - aim at the mouse position, projected onto the ground plane
   - fire with LMB (auto-fire is ON by default; the setting switches to click-to-fire)
   - dash with Space or Shift
-  - swap weapons with Q or the mouse wheel; select a slot directly with 1 or 2
+  - swap weapons with Q or the mouse wheel (there is no separate slot-select key — the two hands
+    are reached by swapping, and the number row belongs to the level-up cards)
   - reroll the level-up offer with R
   - pick a level-up card with 1, 2 or 3 (also by click or by gamepad A, X or Y)
   - pause with Esc or P
   - toggle the debug overlay with F3
-- **Gamepad** (`navigator.getGamepads`, standard mapping, dead zone 0.2): move with the left stick, aim with the right stick (fires while aimed), dash with RB or A, swap weapons with LB or Y, pause with Start.
+- **Gamepad** (`navigator.getGamepads`, standard mapping only, dead zone 0.2): move with the left stick, aim with the right stick (fires while aimed), fire with the right trigger, dash with RB or A, swap weapons with LB or Y, pause with Start. With a level-up on screen the three face buttons are the three cards — A, X, Y — which is why the reader takes a `layout` per frame instead of carrying one button table. Three decisions worth keeping:
+  - **Polled, not event-driven.** A held button reports "down" every frame, so `src/input/gamepad.ts` keeps the previous frame's pressed bits and reports edges. Dash and fire are read as *held* state (the sim wants them true every tick), swap, pause and a card as *one press each*.
+  - **One dead zone, shared.** The 0.2 is `MOVE_DEAD` from `src/sim/input.ts` — the same cut the replay packer calls "centred" — and the reading is rescaled from zero past it, so clearing the zone does not jump to a quarter speed, a full push is still full speed, and a pad-driven run packs into a replay unchanged.
+  - **Not in the bind map.** Pads are not remappable in the Controls tab: a stick is not a key under any mapping and the face buttons mean a different thing per screen. They get their own two tables in `gamepad.ts` while sharing the keyboard's action vocabulary (`heldFlagOf`, `pickSlotOf`), so a pad and a key that both mean `dash` are read as held the same way.
 - **Keybinds** can be remapped in settings.
 - **Input path:** `InputSampler` (DOM) → once per tick it fills a plain `InputFrame {moveX, moveY, aimX, aimY, fire, dash, swap, pick}` → `step(world, frame)`. Tests and replays build `InputFrame`s directly.
 

@@ -6,24 +6,30 @@
  * that frame is what `step()` sees — so a run can be replayed from a frame log and a
  * unit test can drive gameplay without a browser (TECH.md "Input").
  *
- * Two kinds of thing come off the devices and they are kept apart on purpose:
+ * Three kinds of thing come off the devices and they are kept apart on purpose:
  *
- * - **State** (held keys, pointer position, button) becomes an `InputFrame` field,
- *   read the same way every tick, so holding a key keeps working.
- * - **Latched one-shots** (Escape, Enter, R) are consumed once by the app, which
- *   decides what they mean in the current scene. The sampler has no idea whether the
- *   game is paused: `takeCommands` only reports what was pressed.
+ * - **State** (held keys, pointer position, button, stick axis) becomes an
+ *   `InputFrame` field, read the same way every tick, so holding a key keeps working.
+ * - **Latched one-shots** (Escape, Enter, R, the pad's Start) are consumed once by the app, which
+ *   decides what they mean in the current scene. The sampler has no idea whether the game is
+ *   paused: `takeCommands` only reports what was pressed.
+ * - **A layout**, which says what the pad's face buttons mean this frame — dash and swap, or the
+ *   three level-up cards. The app knows the screen and the sampler does not, so the app hands it
+ *   over as an argument instead of the input layer guessing at a scene it cannot see.
  *
- * Which key means what is not in this file: it comes from `bindings.ts` as a compiled
- * `BindTable`, the one map the Controls tab edits too. That is what makes a remap real —
- * the settings screen changes the table, `setBindings` hands the sampler the new one, and
- * the next key press is already read under it.
+ * Which key means what is not in this file: it comes from `bindings.ts` as a compiled `BindTable`,
+ * the one map the Controls tab edits too. That is what makes a remap real — the settings screen
+ * changes the table, `setBindings` hands the sampler the new one, and the next key press is
+ * already read under it. The gamepad keeps its own small table in `gamepad.ts` and shares this
+ * file's action vocabulary: buttons are polled rather than delivered as events, so they need edge
+ * tracking of their own, and a stick is not a key under any mapping.
  *
  * The host is injected so a test can hand it a fake: `addEventListener` and
- * `removeEventListener` are all this file needs from it.
+ * `removeEventListener` are all this file needs from it. The pad list is injected the same way.
  */
 
 import { buildBinds, heldFlagOf, moveVectorOf, pickSlotOf, type BindTable } from './bindings';
+import { GamepadReader, type PadLayout, type PadSource } from './gamepad';
 import { resetFrame, type InputFrame } from '../sim/input';
 
 /** The part of a key or pointer event this file reads. */
@@ -70,6 +76,14 @@ export interface SamplerPorts {
    * (`buildBinds()`), which is what the sampler's own tests and a headless run do.
    */
   bindings?: BindTable;
+  /**
+   * Where the gamepads come from. Defaults to `navigator.getGamepads`, which is an empty list on
+   * a machine without one and in a Node test, so the pad half of the sampler costs one call and a
+   * handful of comparisons until somebody plugs a controller in.
+   */
+  pads?: PadSource;
+  /** Where a pad poll that throws is reported, rather than swallowed. */
+  note?: (problem: string) => void;
 }
 
 /** Below this length an aim vector is a shrug, not a direction. */
@@ -106,6 +120,7 @@ export class InputSampler {
   private readonly held = new Set<'dash' | 'fire'>();
   private readonly ground = { x: 0, y: 0 };
   private readonly commands: CommandBits = { pause: false, accept: false, reroll: false };
+  private readonly pad: GamepadReader;
 
   private binds: BindTable;
   private pointerX = 0;
@@ -122,6 +137,7 @@ export class InputSampler {
     this.ports = ports;
     this.host = ports.host ?? defaultHost();
     this.binds = ports.bindings ?? buildBinds();
+    this.pad = new GamepadReader({ pads: ports.pads, note: ports.note });
 
     this.on('keydown', (e) => this.handleKey(e, true));
     this.on('keyup', (e) => this.handleKey(e, false));
@@ -244,8 +260,14 @@ export class InputSampler {
    * Movement and aim are sampled from held state; the swap, pick and dash one-shots
    * are latches that clear as they are read, so one press is one tick of intent no
    * matter how long the key stays down.
+   *
+   * The keyboard and mouse are read first and the gamepad second, into the same frame, and the pad
+   * only ever adds to what the keys already said — see the merge rules in `gamepad.ts`. That order
+   * is also why a pad button cannot lose to a keyboard it is not fighting with: a resting stick
+   * writes nothing. `layout` says what the face buttons mean this frame; the shell knows which
+   * screen it is on and this file does not, so it is passed in rather than looked up.
    */
-  sample(frame: InputFrame): void {
+  sample(frame: InputFrame, layout: PadLayout = 'play'): void {
     resetFrame(frame);
 
     for (const source of this.down) {
@@ -264,6 +286,7 @@ export class InputSampler {
     this.pickLatch = 0;
 
     this.sampleAim(frame);
+    this.pad.read(layout, frame, this.commands);
   }
 
   /**
@@ -295,6 +318,10 @@ export class InputSampler {
   /**
    * Copy the scene-level latches into `out` and clear them: one press is one use,
    * whoever reads it, and the app decides what the press means in this scene.
+   *
+   * A key press is already sitting here by the time it is called, because the browser delivers
+   * events between frames. A pad press is written during `sample`, so it drains on the following
+   * frame: one frame of lag, paid for a device that reports held state instead of transitions.
    */
   takeCommands(out: CommandBits): CommandBits {
     out.pause = this.commands.pause;

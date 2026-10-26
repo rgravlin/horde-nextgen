@@ -32,6 +32,7 @@ import { ENEMIES } from '../content/enemies';
 import { POWERUPS } from '../content/powerups';
 import { WEAPONS } from '../content/weapons';
 import { BIND_DEFS, buildBinds, swapBinds, type BindAction, type BindTable } from '../input/bindings';
+import type { PadSource } from '../input/gamepad';
 import { InputSampler } from '../input/sampler';
 import type { View } from '../render/renderer';
 import { createInputFrame } from '../sim/input';
@@ -258,6 +259,13 @@ export interface AppPorts {
   settings?: Settings;
   /** Unlocks, best times and history, read at boot. A run's end updates the copy. */
   meta?: Meta;
+  /**
+   * Where the gamepads come from. Left out, the sampler polls the real `navigator.getGamepads`
+   * through `input/gamepad.ts`; a headless test hands over a list of sticks and buttons and plays
+   * the game with a controller that does not exist. It is a port for the same reason the storage
+   * is one: `src/game` does not reach for `window`, so the scene machine runs in plain Node.
+   */
+  pads?: PadSource;
 }
 
 /** Rolling window for the fps estimate; below this it reports 0 ("still warming up"). */
@@ -340,10 +348,34 @@ export function createApp(ports: AppPorts): App {
    */
   let returnTo: SceneId = 'menu';
 
+  let errorCount = 0;
+
+  /**
+   * Where a problem goes instead of disappearing: the same tally a sim assertion
+   * failure uses, so a save that would not write or a save that would not read shows up in
+   * `__forgeState().errors` (AGENTS.md "count caught errors in the state's errors"). A device
+   * poll that throws reports through it too, which is the only way a dead gamepad is visible.
+   *
+   * It is declared before the sampler because the sampler is the first thing handed to it.
+   */
+  const problems: ProblemSink = {
+    note() {
+      errorCount++;
+    },
+  };
+
   const sampler = new InputSampler({
     player: () => world.player,
     project: view ? (clientX, clientY, out) => view.aim(clientX, clientY, out) : undefined,
     bindings: binds,
+    /**
+     * The pads come in as a port for the same reason the storage does: `src/game` may not reach
+     * for `navigator` (ARCHITECTURE.md), and a headless test then plays with no controller rather
+     * than with a fake to invent — a test that wants one hands over a list of sticks and buttons.
+     * Left out, `gamepad.ts` polls the real `navigator.getGamepads`.
+     */
+    pads: ports.pads,
+    note: (problem) => problems.note(problem),
   });
 
   const clock = createClock();
@@ -352,20 +384,8 @@ export function createApp(ports: AppPorts): App {
   const commands: CommandBits = { pause: false, accept: false, reroll: false };
   const frameTimes = new Float32Array(FPS_SAMPLES);
   let frameTimeIndex = 0;
-  let errorCount = 0;
 
   const storage = ports.storage ?? null;
-
-  /**
-   * Where a storage problem goes instead of disappearing: the same tally a sim assertion
-   * failure uses, so a save that would not write or a save that would not read shows up in
-   * `__forgeState().errors` (AGENTS.md "count caught errors in the state's errors").
-   */
-  const problems: ProblemSink = {
-    note() {
-      errorCount++;
-    },
-  };
 
   /**
    * Whether there is a run to come back to, read once and kept up to date by every write.
@@ -696,7 +716,13 @@ export function createApp(ports: AppPorts): App {
       // Sample once per frame, then feed every step this frame runs the same frame
       // (ARCHITECTURE.md "Data flow"). In a frozen scene the sample still runs, so
       // the level-up pick and the swap latch are read even while nothing steps.
-      sampler.sample(frame);
+      //
+      // The second argument is which screen the gamepad's face buttons are read against: with the
+      // cards up they are cards 1, 2 and 3, and anywhere else they are dash and swap
+      // (`input/gamepad.ts`). It is taken from the scene at the top of the frame rather than from
+      // the world at the bottom, so the frame that opens a level-up is still a play frame and a
+      // button held through the transition is not spent on a card nobody chose.
+      sampler.sample(frame, scene === 'levelup' ? 'cards' : 'play');
 
       let alpha = 0;
       if (scene === 'playing') {

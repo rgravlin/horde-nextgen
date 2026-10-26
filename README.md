@@ -29,6 +29,64 @@ belong; [TECH.md](TECH.md) the pinned engine versions and why they were chosen;
 weapon, an enemy or a power-up; `ARCHITECTURE.md` has the rules a new piece of
 content has to follow.
 
+## Controls
+
+Keyboard, mouse and gamepad are read the same way: once per frame into one `InputFrame`, which is
+all `step()` ever sees. Nothing changes inside a key or button handler, so a keyboard run, a pad
+run and a recorded replay all drive the same simulation code.
+
+### Keyboard and mouse
+
+| what | keys |
+|---|---|
+| move | `W` `A` `S` `D`, or the arrow keys |
+| aim | the mouse, projected onto the floor |
+| fire | left button — auto-fire is on by default, which is what the setting switches off |
+| dash | `Space` or either `Shift` |
+| swap hands | `Q`, or the mouse wheel |
+| take a level-up card | `1` `2` `3`, or click the card |
+| reroll the offer | `R` |
+| pause | `Esc` or `P` |
+| debug overlay | `F3` |
+
+Keys are rebappable in the settings screen's Controls tab. The table lives in
+`src/input/bindings.ts` and both the sampler and that tab read it, so a remap is real on the next
+key press.
+
+### Gamepad
+
+A controller is polled, not listened for, and picked up on the frame after you plug it in. Only a
+pad reporting the `standard` mapping is read: on anything else index 0 is not necessarily the
+bottom face button, and a controller whose buttons silently mean other buttons is worse than no
+controller.
+
+| what | control |
+|---|---|
+| move | left stick — 0.2 radial dead zone, rescaled from zero past it, so a half-push is half speed and a full push is still full speed |
+| aim + fire | right stick: aims and fires while it is held out of its dead zone |
+| fire | right trigger, which fires along the aim without steering it |
+| dash | `RB` or `A` — read as held, like `Space`, so you can hold it and keep dashing |
+| swap hands | `LB` or `Y` — one swap per press |
+| pause | `Start` — one pause per press, however long you hold it |
+| take a level-up card | `A` `X` `Y`, left to right |
+
+`A` is therefore a dash in a fight and the left card at a level-up: a pad has six buttons and two
+thumbs, so the face buttons are read against whatever screen is up. That is the only thing that
+changes meaning between screens, and it is why the reader takes the layout as an argument instead
+of learning about scenes. Movement and aim go to whichever device is pushing harder and a pad
+button can only ever add a flag, never clear a key's, so the two devices can be used together
+without one fighting the other.
+
+The pad is not in the Controls tab. A stick is not a key under any mapping and the face buttons
+depend on the screen, so it keeps its own two button tables in `src/input/gamepad.ts`, where they
+sit next to the reason each button is where it is.
+
+Pinned by `tests/unit/gamepad.test.ts`, which drives `GamepadReader` with plain objects shaped
+like a `Gamepad` — three runs through `step()` and three more through the real scene machine driven
+headless (`createApp` with no renderer, no overlay and no shelf), so a pad frame has to be a frame
+the game plays *and* the shell has to hand it over. There is no browser scenario for it:
+Playwright 1.48 emulates keyboard, mouse, wheel and touch, not gamepads.
+
 ## Saves, settings and Continue
 
 Three versioned JSON keys in `localStorage`, all under the app's own name:

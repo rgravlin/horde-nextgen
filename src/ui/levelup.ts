@@ -165,7 +165,7 @@ export function createCardPanel(
   heading.className = 'cards-title';
   const hint = document.createElement('span');
   hint.className = 'cards-hint';
-  hint.textContent = '1 / 2 / 3 or click a card \u00b7 R rerolls';
+  hint.textContent = '1 / 2 / 3, click a card or A / X / Y on a pad \u00b7 R rerolls';
   head.appendChild(heading);
   head.appendChild(hint);
 
