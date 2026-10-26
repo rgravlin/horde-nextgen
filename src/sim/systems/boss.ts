@@ -25,7 +25,7 @@
  *   `world.boss.skips` instead of vanishing.
  *
  * **On what the encounter is made of.** The three bodies a chapter can end on are behaviours in
- * `systems/enemies.ts` (`brute`, `brooder`, `matron`), not a boss class of their own: the slam
+ * `systems/enemies/bosses.ts` (`brute`, `brooder`, `matron`), not a boss class of their own: the slam
  * ring, the brood and the bolt fan are each an answer to a skill the trash already taught. What
  * this file adds is not damage but the fight's *stage* — the escort, the landing point, and the
  * fact that killing them moves the run on.

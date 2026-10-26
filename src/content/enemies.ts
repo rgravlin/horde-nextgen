@@ -2,7 +2,7 @@
  * Enemy content: the EnemyDef schema, the archetypes the sim can spawn and the wave
  * recipes that mix them into packs.
  *
- * `ai` names a behaviour in src/sim/systems/enemies.ts and `params` are the numbers
+ * `ai` names a behaviour in src/sim/systems/enemies/ and `params` are the numbers
  * that behaviour reads, so a new archetype is a data entry unless it genuinely needs
  * a new movement or attack pattern. The parameter names are documented where the
  * behaviour uses them, and a behaviour owns its keys rather than sharing one flat
@@ -12,8 +12,8 @@
 export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
 
 /**
- * Behaviour ids, in the order the `AI` record in systems/enemies.ts lists them.
- * That record is keyed by this union, so an id without a behaviour is a
+ * Behaviour ids, in the order the `AI` record in systems/enemies/behaviours.ts lists
+ * them. That record is keyed by this union, so an id without a behaviour is a
  * typecheck error instead of an enemy that quietly stands still.
  *
  * The last three are the end-of-level encounters. They are behaviours rather than
@@ -58,7 +58,7 @@ export interface EnemyDef {
   readonly radius: number;
   /**
    * Damage each hit loses to it, after falloff. A body with `armorSide` set only pays
-   * that much inside its facing arc — see `armorAgainst` in systems/enemies.ts.
+   * that much inside its facing arc — see `armorAgainst` in systems/enemies/contact.ts.
    */
   readonly armor: number;
   /** XP its shard is worth. */
@@ -339,7 +339,7 @@ export const ENEMIES: readonly EnemyDef[] = [
     xp: 4,
     ai: 'shooter',
     // The band, the flash and the bolt are all documented where the behaviour reads
-    // them (standoffShoot in systems/enemies.ts): the band it works at, the seconds of
+    // them (standoffShoot in systems/enemies/standoff.ts): the band it works at, the seconds of
     // wind-up and cooldown, and the bolt's speed, damage and life.
     params: {
       sepRadius: 1.3,

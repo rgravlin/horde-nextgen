@@ -93,7 +93,7 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
 
 ## Code patterns
 ```
-src/sim/      world.ts step.ts rng.ts spatialHash.ts pools.ts systems/(move,steer,weapons,projectiles,enemies,pickups,waves).ts serialize.ts replay.ts
+src/sim/      world.ts(+ pools.ts constants.ts events.ts, all re-exported through world.ts) step.ts rng.ts spatialHash.ts systems/(move,steer,weapons,status,enemyProjectiles,pickups,waves).ts systems/projectiles/(index,shared,ray,melee,flyers).ts systems/enemies/(index,shared,spawn,update,behaviours,seekers,rushers,standoff,support,bosses,contact,deaths).ts serialize.ts replay.ts
 src/content/  weapons.ts enemies.ts powerups.ts levels.ts  (data only, typed defs)
 src/render/   renderer.ts instancing.ts particles.ts post.ts lights.ts assets.ts camera.ts
 src/audio/    synth.ts songs.ts sfx.ts      src/ui/ hud.ts menus.ts (DOM overlay)
@@ -104,7 +104,8 @@ src/main.ts   tests/unit/*.test.ts  tests/e2e/*.spec.ts  tools/bench.ts  public/
   - The `fire` kinds are `projectile`, `hitscan`, `beam`, `arc`, `melee`, `chain` and `orb`.
   - The optional fields are `heat`, `energy`, `aoe`, `dot`, `chain` and `homing`.
 - Enemy example: `{ id:"charger", faction:"foundry", hp:60, speed:3, radius:0.6, armor:0, xp:3, ai:"charger", ai params:{windup:0.6, dashSpeed:14, cooldown:3}, mesh:"charger", accent:"#FF7A1A" }`.
-  - `ai` selects one behaviour function in `systems/enemies.ts`.
+  - `ai` selects one behaviour function under `systems/enemies/` (one module per movement
+    family; the dispatch table that has to cover every id is `systems/enemies/behaviours.ts`).
   - Behaviours are small state machines whose telegraphs (wind-up, charge line) are emitted as events.
 - Levels are data: `{ id, palette, obstacles:[…], hazards:[…], waves:[{t, pack:[["chaser",30],["shooter",4]], edge:"any"}], boss }`.
 - **Adding content** means adding one entry to the relevant data file, plus a mesh or behaviour only if it is new. Each content type has a README recipe.

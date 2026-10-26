@@ -167,9 +167,13 @@ Add a `WeaponDef`.
 | `armorPen` | fraction of the target's armour ignored, taken off before the `armor` subtraction |
 | `charge` | `{time, speed, dmg}`: a held trigger builds a draw and looses at a full draw or the moment the button comes up, so a panicked tap still fires, flatter and weaker |
 
-`fire` names the delivery path, and all seven kinds have one in
-`src/sim/systems/projectiles.ts`: `projectile`, `hitscan`, the `melee` sweep, the lobbed
-`arc` shell, the continuous `beam`, the jumping `chain` bolt and the drifting `orb`. A
+`fire` names the delivery path, and all seven kinds have one under
+`src/sim/systems/projectiles/`: `projectile`, `hitscan`, the `melee` sweep, the lobbed
+`arc` shell, the continuous `beam`, the jumping `chain` bolt and the drifting `orb`. The
+folder is cut along those paths — `ray.ts` holds the hitscan, beam and chain marches,
+`melee.ts` the arc sweep, `flyers.ts` everything a round does while it is in the air, and
+`shared.ts` the one `damage` helper, the falloff and the query padding they all read — so
+a new kind is a new module plus a line in `index.ts`, not a new branch in a switch. A
 `beam` and a `chain` bolt resolve the tick they are called; a `chain` bolt that finds
 nobody is never thrown, and an `orb` resolves where it gets to rather than where it was
 aimed. Every hit reports one `Hit` event, the beam's cuts included — that event is what a
@@ -195,17 +199,18 @@ hand — because `forge-scenarios.json` has no step that evaluates JavaScript (i
 vocabulary is click, fill, press, wait, hold, mouse, shot, state) and no key grants a
 weapon.
 
-### An enemy — `src/content/enemies.ts`, read by `src/sim/systems/enemies.ts`
+### An enemy — `src/content/enemies.ts`, read by `src/sim/systems/enemies/`
 
 Add an `EnemyDef`, and if the movement is genuinely new add its `ai` id to `AI_IDS` and one
-function to the `AI` table — the table has to cover every id, so a missing behaviour is a
-typecheck error rather than an enemy that quietly stands still. The fields with behaviour
-behind them are `hp`, `speed`, `radius`, `armor`, `xp` (the shard the body drops) and
-`params`: `sepRadius`/`sepPush` for crowd separation through the spatial hash,
-`touchRange`/`touchDamage` for contact damage, which one i-frame window caps to a single
-hit however many bodies arrive. A behaviour's own numbers also live in `params` and are
-documented where the behaviour reads them — the ranged trio's band edges, wind-up, bolt
-speed/damage/life, lob range/arc speed/blast and heal range/beat/amount included.
+function to the `AI` table in `src/sim/systems/enemies/behaviours.ts` — the table has to
+cover every id, so a missing behaviour is a typecheck error rather than an enemy that
+quietly stands still. The fields with behaviour behind them are `hp`, `speed`, `radius`,
+`armor`, `xp` (the shard the body drops) and `params`: `sepRadius`/`sepPush` for crowd
+separation through the spatial hash, `touchRange`/`touchDamage` for contact damage, which
+one i-frame window caps to a single hit however many bodies arrive. A behaviour's own
+numbers also live in `params` and are documented where the behaviour reads them — the
+ranged trio's band edges, wind-up, bolt speed/damage/life, lob range/arc speed/blast and
+heal range/beat/amount included.
 
 Ranged bodies spend themselves through the shared `enemyShots` pool (cap 512) that
 `src/sim/systems/enemyProjectiles.ts` flies after the enemy pass: a bolt is the segment it

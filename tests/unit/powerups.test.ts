@@ -103,7 +103,7 @@ describe('power-up content', () => {
       'shield', // enemyProjectiles.ts through absorbIncoming
       'regen', // step.ts timers
       'lifesteal', // projectiles.ts
-      'thorns', // enemies.ts contact
+      'thorns', // enemies/contact.ts contact
       'speed',
       'dashCd', // step.ts
       'spread',

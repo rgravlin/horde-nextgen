@@ -18,10 +18,10 @@
  *   reconnoitre the hash for bodies to catch, so a lob spent on a dodged ring
  *   costs the horde nothing but the throw.
  *
- * `hurtPlayer` lives here rather than in `systems/enemies.ts` so the three
+ * `hurtPlayer` lives here rather than under `systems/enemies/` so the three
  * enemy-side damage sources — contact, blast and projectile — share one i-frame
  * rule written once, and the two files still only import in one direction:
- * `enemies.ts` triggers shots from this file, this file spends them.
+ * `enemies/standoff.ts` triggers shots from this file, this file spends them.
  *
  * Nothing here allocates: shots come out of the pool, and the only reads of the
  * world are the pools, the player and the run's folded stat block.
