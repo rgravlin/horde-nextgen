@@ -37,6 +37,13 @@ import { createHud } from './ui/hud';
  * bench that had to be started by hand from a menu would never be run twice the same way — and
  * `&seconds=` and `&chapter=` are there for the same reason: two runs of the same URL are two
  * comparable numbers, and two runs of a different URL are not.
+ *
+ * `?arena=1` is the other run-shaped knob: it starts the page inside the Endless Arena. A player
+ * reaches that mode through the chapter grid or the victory sweep, once a win is in their meta
+ * file, and both of those doors stay as they are — this is the scripted door, for the `arena`
+ * scenario in `forge-scenarios.json`, which starts from an empty profile and whose step list can
+ * only press keys and click things. It goes through `__forgeDebug.arena()` rather than by editing
+ * any value, so the run it produces is still reproducible from its seed.
  */
 function readParams(): {
   seed: number;
@@ -44,12 +51,14 @@ function readParams(): {
   bench: number;
   seconds: number;
   chapter: number;
+  arena: boolean;
 } {
   let seed = 1;
   let forceWebGL = false;
   let bench = 0;
   let seconds = 0;
   let chapter = 0;
+  let arena = false;
   try {
     const params = new URLSearchParams(location.search);
     const positive = (key: string): number => {
@@ -66,10 +75,11 @@ function readParams(): {
     // `&chapter` is 1-based, the way every other place a chapter is named is, so `&chapter=10`
     // is the tenth floor. It is clamped against the roster where the bench is armed.
     chapter = positive('chapter');
+    arena = params.get('arena') === '1';
   } catch {
     // A missing location (a non-browser import) keeps the defaults.
   }
-  return { seed, forceWebGL, bench, seconds, chapter };
+  return { seed, forceWebGL, bench, seconds, chapter, arena };
 }
 
 /**
@@ -247,7 +257,7 @@ function viewOptions(settings: Settings, forceWebGL: boolean): ViewOptions {
 async function boot(): Promise<void> {
   const canvas = document.getElementById('gl') as HTMLCanvasElement | null;
   const ui = document.getElementById('ui');
-  const { seed, forceWebGL, bench, seconds, chapter } = readParams();
+  const { seed, forceWebGL, bench, seconds, chapter, arena } = readParams();
 
   // The state hook is registered before anything is awaited, so `window.__forgeState`
   // is never absent — not while the renderer is still coming up, and not on a box
@@ -349,6 +359,13 @@ async function boot(): Promise<void> {
       seconds: seconds || undefined,
       chapter: chapter > 0 ? chapter - 1 : undefined,
     });
+  } else if (arena) {
+    // `?arena=1` starts the page in the Endless Arena, and starts it the same way the bench URL
+    // does: through the debug door, before the loop runs, so the URL alone fixes what the page is.
+    // A person gets to the mode through the chapter grid or the victory sweep instead, and only
+    // once a win is in their meta file — this knob is for the `arena` scenario, which has no win
+    // to spend and no way to press one.
+    app.debug.arena();
   }
 
   if (view) {

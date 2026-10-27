@@ -40,6 +40,8 @@ export interface DebugHost {
   readonly frame: InputFrame;
   /** Throw the run away and start a fresh one on chapter `chapter`, playing. */
   restart(chapter: number): void;
+  /** Throw the run away and start a fresh Endless Arena run, playing. */
+  arenaRun(): void;
   /** Install the bench window the rest of the frame is measured by; null clears it. */
   arm(rig: BenchRig | null): void;
   readonly backend: 'webgpu' | 'webgl2' | 'none';
@@ -125,6 +127,21 @@ export function createDebug(host: DebugHost): ForgeDebug {
       const w = host.world();
       rig.hold(w, host.frame);
       return w.enemies.count;
+    },
+
+    /**
+     * Start an Endless Arena run.
+     *
+     * It clears the rig first for the same reason `bench` replaces the run: a rig pins its held
+     * load into whatever run it armed, so a window that survived this would top the arena's floor
+     * back up to its own target and the run would measure instead of play. The mode's own rules
+     * (no script, no encounter, no victory) come from `startArena` in `sim/systems/levels.ts`,
+     * which is also the door the unit tests use, so the scenario and the tests enter through one
+     * door rather than two.
+     */
+    arena() {
+      host.arm(null);
+      host.arenaRun();
     },
   };
 }

@@ -156,7 +156,12 @@ describe('the settings file', () => {
 
 describe('the shell running on those settings', () => {
   /** An app with no renderer and no overlay, driven through the door `main.ts` uses. */
-  function headless(meta?: { unlockedChapters: number; bestTimes: number[]; history: [] }) {
+  function headless(meta?: {
+    unlockedChapters: number;
+    bestTimes: number[];
+    history: [];
+    arenaUnlocked: boolean;
+  }) {
     return createApp({ view: null, hud: null, seed: 1, backend: 'none', storage: null, meta });
   }
 
@@ -198,7 +203,12 @@ describe('the shell running on those settings', () => {
     app.choose(4);
     expect(app.world.chapter).toBe(0);
 
-    const earned = headless({ unlockedChapters: 5, bestTimes: [], history: [] });
+    const earned = headless({
+      unlockedChapters: 5,
+      bestTimes: [],
+      history: [],
+      arenaUnlocked: false,
+    });
     earned.command('start');
     earned.choose(4);
     expect(earned.scene).toBe('playing');

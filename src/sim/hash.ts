@@ -11,7 +11,7 @@
  * runs this code.
  */
 
-import type { Pool, World } from './world';
+import { layoutOf, type Pool, type World } from './world';
 
 const FNV_OFFSET = 0x811c_9dc5;
 const FNV_PRIME = 0x0100_0193;
@@ -106,7 +106,9 @@ export function hashWorld(world: World): number {
   let h = FNV_OFFSET;
 
   h = fnv32Word(h, world.tick);
-  h = fnv32Word(h, world.chapter);
+  // The floor, not the chapter number: an arena run is a different room at the same chapter
+  // index, and the two are told apart by `layoutOf` everywhere else, so here too.
+  h = fnv32Word(h, layoutOf(world));
   h = fnv32Word(h, world.errors);
   h = mixScalar(h, world.score);
   h = fnv32Word(h, world.kills);
@@ -177,7 +179,7 @@ export function hashWorld(world: World): number {
     h = mixScalar(h, z.t[i]);
     h = fnv32Byte(h, z.armed[i]);
   }
-  // The cover is not folded in: it is fixed for the chapter, `chapter` above already
+  // The cover is not folded in: it is fixed for the floor, the layout key above already
   // names which one, and rehashing sixty boxes every call would cost a scan to repeat a
   // fact the fingerprint already carries.
   // `blasts` is deliberately not covered: the stack is drained every tick, so between

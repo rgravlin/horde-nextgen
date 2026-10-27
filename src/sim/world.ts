@@ -189,6 +189,17 @@ export interface World {
   kills: number;
   /** Chapter index, 0-based. */
   chapter: number;
+  /**
+   * Whether the run is an Endless Arena run rather than a campaign run.
+   *
+   * One fact with two consequences, and it is kept here rather than folded into `chapter`
+   * because the arena is not a floor number: `chapter` stays 0 so the ten chapter tiles,
+   * `bestTimes` and the wave scripts all keep meaning what they say, while `layoutOf` and
+   * `systems/waves.ts` read this to put a different room and a different ladder under the
+   * player. `serialize.ts` carries it in the state's flag word, so a resumed arena run is
+   * still an arena run.
+   */
+  endless: boolean;
   /** The run is over: the player died, so the game shows the summary. */
   over: boolean;
   /**
@@ -348,6 +359,7 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     score: 0,
     kills: 0,
     chapter: 0,
+    endless: false,
     over: false,
     chapterComplete: false,
     victory: false,
@@ -445,4 +457,18 @@ export function setArena(w: World, half: number): void {
   w.minY = -inner;
   w.maxX = inner;
   w.maxY = inner;
+}
+
+/**
+ * Which floor the run is standing on: `chapter` for a campaign run, -1 for an arena run.
+ *
+ * The renderer's tint, its cover and scenery rebuild memos, the soundtrack and `hashWorld` all
+ * ask this one question, and they all have to get the same answer. Keyed off a number rather
+ * than read off `endless` at each site because a memo needs a *key*: four places that each
+ * remember to compare `chapter` *and* `endless` is four places where one of them forgets, and
+ * the failure is a room that keeps the previous room's walls standing in it. For a campaign run
+ * this is `chapter`, unchanged, which is what keeps the ten pinned chapter fingerprints pinned.
+ */
+export function layoutOf(w: World): number {
+  return w.endless ? -1 : w.chapter;
 }

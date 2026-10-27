@@ -10,7 +10,7 @@ import { buildState, measureFps, nearestEnemies, type StateHost } from '../../sr
 import { createDebug, type DebugHost } from '../../src/game/appDebug';
 import { defaultSettings, SAVE_KEY, type StorageLike } from '../../src/game/persistence';
 import { createInputFrame } from '../../src/sim/input';
-import { startChapter } from '../../src/sim/systems/levels';
+import { startArena, startChapter } from '../../src/sim/systems/levels';
 import { spawnEnemy } from '../../src/sim/systems/enemies';
 import { createRng, next } from '../../src/sim/rng';
 import { createWorld, loadSlot, type World } from '../../src/sim/world';
@@ -96,15 +96,16 @@ function hostOver(w: World, over: Partial<StateHost> = {}): StateHost {
 }
 
 /**
- * A hand-made debug host: a world that gets replaced, and the two doors a real shell owns.
+ * A hand-made debug host: a world that gets replaced, and the three doors a real shell owns.
  *
  * `restart` swaps in a fresh world, which is what the real one does — that replacement is the
- * whole reason the host answers `world()` instead of holding a world.
+ * whole reason the host answers `world()` instead of holding a world. `arenaRun` is the same
+ * replacement on the arena's floor, so a test can drive `debug.arena()` without an app.
  */
 function rigOver(w: World) {
   let world = w;
   const restarts: number[] = [];
-  const rigs: BenchRig[] = [];
+  const rigs: Array<BenchRig | null> = [];
   const host: DebugHost = {
     world: () => world,
     frame: createInputFrame(),
@@ -114,8 +115,15 @@ function rigOver(w: World) {
       startChapter(fresh, chapter);
       world = fresh;
     },
+    arenaRun() {
+      const fresh = createWorld(11, { arenaHalf: 40 });
+      startArena(fresh);
+      world = fresh;
+    },
     arm(rig: BenchRig | null) {
-      if (rig !== null) rigs.push(rig);
+      // Every arm is recorded, including the one that clears: `debug.arena()` disarms on the way
+      // in, and a fixture that dropped the null could not see it.
+      rigs.push(rig);
     },
     backend: 'none',
     now: () => 0,
@@ -330,6 +338,19 @@ describe('the debug hooks', () => {
 
     at.debug.bench(1, { chapter: 999 });
     expect(at.restarts[at.restarts.length - 1]).toBe(LEVELS.length - 1);
+  });
+
+  it('starts an arena run, and clears a window it is called over', () => {
+    const at = rigOver(createWorld(3));
+    at.debug.bench(20, { seconds: 1, warmup: 0 });
+    expect(at.rigs).toEqual([expect.anything()]);
+
+    at.debug.arena();
+
+    // A rig pins its held load into the run it armed, so a window that survived the arena would
+    // top its own horde back up on an endless floor: measuring, not playing.
+    expect(at.rigs[at.rigs.length - 1]).toBeNull();
+    expect(at.world().endless).toBe(true);
   });
 });
 

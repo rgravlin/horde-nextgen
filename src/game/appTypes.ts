@@ -157,6 +157,16 @@ export interface ForgeDebug {
    * no, which is the load being short and worth seeing.
    */
   bench(n: number, options?: BenchOptions): number;
+  /**
+   * Start a fresh Endless Arena run, playing.
+   *
+   * A *scripted* door, not a player one: the mode opens for a person out of the chapter grid or
+   * off the victory sweep, and only once a win is recorded in the meta. A scenario starts from an
+   * empty profile, so it has no win to spend, and its step list can only press keys and click
+   * things — it cannot call this. `?arena=1` reaches it off the URL for the same reason
+   * `?bench=N` does, and it is checked by the `arena` scenario in `forge-scenarios.json`.
+   */
+  arena(): void;
 }
 
 export interface App {

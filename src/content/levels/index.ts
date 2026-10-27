@@ -51,6 +51,7 @@
  * budget — is the check that says so first.
  */
 
+import { ARENA, ARENA_ROSTERS, arenaRosterAt, bandAt, bandIndexAt } from './arena';
 import { ELITE_BY_ID, ELITES, eliteIndex } from './elites';
 import { LEVELS_1_3 } from './chapters-1-3';
 import { LEVELS_4_6 } from './chapters-4-6';
@@ -95,6 +96,13 @@ export function eliteRosterAt(index: number): readonly number[] {
   const at = index < 0 ? 0 : index >= LEVEL_ELITES.length ? LEVEL_ELITES.length - 1 : index;
   return LEVEL_ELITES[at];
 }
+
+// The Endless Arena comes through the same door (see `arena.ts` for why it is not an eleventh
+// chapter). `levelAt` stays a *chapter* lookup — it clamps, and a clamped arena would hand back
+// Loading Bay — so a caller that has a layout key rather than a chapter index takes the arena
+// apart from it: `key < 0 ? ARENA : levelAt(key)`.
+export { ARENA, ARENA_ROSTERS, arenaRosterAt, bandAt, bandIndexAt };
+export type { ArenaDef, BandDef } from './arena';
 
 // The rest of the campaign comes in through this file: `sim/systems/{waves,boss,levels,powerups}.ts`,
 // the two enemy spawn modules and the HUD's chapter tiles all read a chapter through here, so

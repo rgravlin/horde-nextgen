@@ -9,34 +9,38 @@
  * camera cannot show any other way — an arrow at the screen edge for every crate and a
  * chevron for every encounter body standing off the visible floor.
  *
- * Two rules the whole file is arranged around:
- *
- * - **Built once, then updated in place.** Every node here exists before the first frame.
- *   This runs once per rendered frame next to a thousand bodies, so a `createElement` per
- *   frame would show up as jank long before a triangle would.
- * - **Written only when it changed.** Text is compared before it is set, bar widths are
- *   quantised to half a percent and marker positions to whole pixels, so a steady frame costs
- *   a handful of compares. The two sweeps that do have to walk the pools (the radar's dot
- *   pass and the edge markers') run at 20 Hz rather than 60, and the radar skips even those
- *   when the world has not ticked.
- *
- * Nothing here imports the renderer. The radar and the edge arrows are both placed from world
- * coordinates, which works because the camera never yaws: world +x is screen right and world
- * +y is screen up, at one fixed foreshortening (see `FORESHORTEN`).
+ * This file is the assembly: the layout built once, and the per-frame read of the World that
+ * keeps it up to date. The three pieces it pulls in are the parts with a rule of their own —
+ * `paint.ts` (write nothing twice), `markers.ts` (who gets an arrow, and where it goes) and
+ * `hands.ts` (what a weapon's gauge says). Nothing here imports the renderer, and nothing
+ * here decides a gameplay action: `HudCommand` below is a list of *scene* requests.
  */
 
-import { ENEMIES } from '../content/enemies';
-import { POWERUPS } from '../content/powerups';
-import { WEAPONS, type WeaponDef } from '../content/weapons';
-import { Phase } from '../sim/systems/levels';
-import { xpProgress } from '../sim/systems/pickups';
-import { TUNE, type Pool, type WeaponSlot, type World } from '../sim/world';
-import type { BindAction, BindTable } from '../input/bindings';
-import type { Meta, Settings } from '../game/persistence';
-import { createCardPanel } from './levelup';
-import { createScreens } from './menus';
-import { createRadar } from './radar';
-import './styles.css';
+import { POWERUPS } from '../../content/powerups';
+import { WEAPONS } from '../../content/weapons';
+import { Phase } from '../../sim/systems/levels';
+import { xpProgress } from '../../sim/systems/pickups';
+import { TUNE, type World } from '../../sim/world';
+import type { BindAction, BindTable } from '../../input/bindings';
+import type { Meta, Settings } from '../../game/persistence';
+import { createCardPanel } from '../levelup';
+import { createScreens } from '../menus';
+import { createRadar } from '../radar';
+import '../styles.css';
+import { EMPTY_HAND, gaugeFill, gaugeText, handLabel } from './hands';
+import {
+  BOSS_MARKERS,
+  CHEST_MARKERS,
+  EDGE_INSET_X,
+  EDGE_INSET_Y,
+  MAP_EVERY,
+  makeMarkers,
+  nearestOutside,
+  pickIdx,
+  placeMarker,
+} from './markers';
+import { make, setArc, setFill, setHidden, setSpan, setText, type SlotNodes } from './paint';
+
 
 /**
  * What an HUD control asks the game to do.
@@ -45,10 +49,12 @@ import './styles.css';
  * dashing and picking a card go through the input sampler and land in an `InputFrame`, because
  * they belong to the simulation's clock; these belong to the shell's, and the shell decides what
  * each one means. `pause` and `resume` are one key read two ways, and `back` is the way out of a
- * panel that was opened from another panel.
+ * panel that was opened from another panel. `arena` is the one of them with no key at all — see
+ * the `arena` case in `game/app.ts`.
  */
 export type HudCommand =
   | 'start'
+  | 'arena'
   | 'pause'
   | 'resume'
   | 'restart'
@@ -107,34 +113,6 @@ export interface Hud {
 }
 
 /**
- * How much the ground's depth axis is squeezed on the way to the screen.
- *
- * The camera looks 55° down (renderer.ts), so metres of world +y reach fewer pixels than
- * metres of +x: about `cos(55°)`, with a little given back to the perspective spread. It only
- * ever *aims* an edge marker rather than placing a fact, so it has to be near rather than
- * exact — and being an estimate, it is written down once instead of inside the maths.
- */
-const FORESHORTEN = 0.62;
-
-/**
- * How far inside the viewport the edge markers run.
- *
- * Not one inset but two: the top and bottom bands hold the wave panel, the encounter plate
- * and the radar, so a marker that hugs a rectangular edge ends up sitting on top of them.
- * The path is therefore a quarter-ellipse — full inset at the middle of each edge, pulled in
- * toward the corners, which is exactly where the corner panels are.
- */
-const EDGE_INSET_X = 34;
-const EDGE_INSET_Y = 76;
-
-/** How many crates and encounter bodies get an arrow. Past that the edge is noise. */
-const CHEST_MARKERS = 6;
-const BOSS_MARKERS = 3;
-
-/** Frames between the two pool sweeps — the radar and the edge markers share the beat. */
-const MAP_EVERY = 3;
-
-/**
  * How many power-up rows the right column draws before it starts counting instead.
  *
  * Twelve rows is about half the column's height, which leaves room for a run that has picked
@@ -153,209 +131,6 @@ const SIZE_EVERY = 45;
  * two map sweeps for a world nobody is playing is work spent on pixels that are not drawn.
  */
 const PLAY_SCENES = new Set(['playing', 'levelup', 'paused', 'summary', 'victory']);
-
-function make(tag: string, className: string, parent: HTMLElement): HTMLElement {
-  const node = document.createElement(tag);
-  node.className = className;
-  parent.appendChild(node);
-  return node;
-}
-
-/** Write text only when it changed: the DOM is slow and most frames change little. */
-function setText(node: HTMLElement, value: string): void {
-  if (node.textContent !== value) node.textContent = value;
-}
-
-/** Quantised width write, for the bars. */
-function setFill(node: HTMLElement, fraction: number): void {
-  const steps = Math.max(0, Math.min(200, Math.round(fraction * 200)));
-  const width = `${steps / 2}%`;
-  if (node.style.width !== width) node.style.width = width;
-}
-
-/**
- * Quantised start-and-length write, for a track that carries two segments.
- *
- * Same half-percent grid as `setFill`, and the length is clamped to what is left of the
- * track so a full shield plus full health still fits inside the bar.
- */
-function setSpan(node: HTMLElement, from: number, fraction: number): void {
-  const start = Math.max(0, Math.min(200, Math.round(from * 200)));
-  const steps = Math.max(0, Math.min(200 - start, Math.round(fraction * 200)));
-  const left = `${start / 2}%`;
-  const width = `${steps / 2}%`;
-  if (node.style.left !== left) node.style.left = left;
-  if (node.style.width !== width) node.style.width = width;
-}
-
-/**
- * How far round the reload dial to paint, in whole percents.
- *
- * A reload lasts between half a second and two, so a full one is a few dozen writes rather
- * than a hundred and twenty; the arc is 14px and reads at 2% granularity.
- */
-function setArc(node: SlotNodes, fraction: number): void {
-  const steps = Math.max(0, Math.min(100, Math.round(fraction * 100)));
-  if (node.arcValue === steps) return;
-  node.arcValue = steps;
-  node.arc.style.setProperty('--arc', String(steps));
-}
-
-/**
- * Show or hide one pooled marker.
- *
- * The last answer is remembered on the node itself, so a steady frame is one string compare
- * and touching `classList` is reserved for the frames that actually change the picture.
- */
-function setHidden(marker: Marker, hidden: boolean): void {
-  const wanted = hidden ? '0' : '1';
-  if (marker.shown === wanted) return;
-  marker.shown = wanted;
-  marker.node.classList.toggle('on', !hidden);
-}
-
-/** One edge marker: a node, the transform last written to it, and whether it is up. */
-interface Marker {
-  node: HTMLElement;
-  last: string;
-  shown: string;
-}
-
-/** One weapon hand, with the two values already written to it. */
-interface SlotNodes {
-  slot: HTMLElement;
-  arc: HTMLElement;
-  name: HTMLElement;
-  tag: HTMLElement;
-  ammo: HTMLElement;
-  gaugeFill: HTMLElement;
-  /** The arc percentage already written; -1 so the first frame always writes. */
-  arcValue: number;
-  /**
-   * The weapon already drawn here, or `null` before the first frame.
-   *
-   * `null` and not `''`: an empty hand's key is the empty string, and a fresh slot must
-   * still be told it is empty. The name and the tag start out blank in the markup, so a
-   * sentinel that could never be a weapon id is what makes the first frame write them.
-   */
-  drawn: string | null;
-}
-
-/**
- * The two lines a hand shows about its weapon: the name, and what family and firing
- * mode it is. Built once per weapon rather than once per frame — the hands change a
- * few times a run and are read sixty times a second.
- */
-const handLabels = new Map<string, { name: string; tag: string }>();
-
-/** What an empty hand says. One object, because the empty case is read every frame too. */
-const EMPTY_HAND = { name: 'empty hand', tag: '' };
-
-/**
- * The name a hand shows for a weapon id.
- *
- * `weapons.ts` keys a gun by `plasmaRepeater` because an id is a key, not a caption;
- * `PLASMAREPEATER` on the slot is the same string read wrong. Splitting the camel case
- * is the whole trick, and it means a new weapon needs no caption written for it.
- */
-function handLabel(id: string): { name: string; tag: string } {
-  let labels = handLabels.get(id);
-  if (labels === undefined) {
-    const def = WEAPONS.find((w) => w.id === id);
-    const name = id.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-    labels = { name, tag: def ? `${def.family} \u00b7 ${def.fire}` : '' };
-    handLabels.set(id, labels);
-  }
-  return labels;
-}
-
-/**
- * The `nearestOutside` scratch: slot indices and squared distances, closest first.
- *
- * Module-level and reused because the sweep that fills it runs every third frame for the rest
- * of the run, and an array per sweep is an allocation per sweep for nothing.
- */
-const pickIdx = new Int32Array(CHEST_MARKERS);
-const pickD2 = new Float64Array(CHEST_MARKERS);
-
-/**
- * The `limit` nearest live slots of `pool` that are off the visible floor, closest first,
- * written into the pick scratch. Returns how many were found (up to `limit`).
- *
- * "Off the visible floor" is `TUNE.viewHalfX/Y` — the same 32x18 m rect the wave spawner
- * drops bodies outside of — rather than a second guess at what the camera covers. One rect,
- * read by the two things that need it: the spawner places a pack outside it, the HUD points
- * at it from inside it.
- *
- * The list is filled by insertion, so a full crate pool costs no sort and no allocation.
- */
-function nearestOutside(pool: Pool, world: World, limit: number, bossOnly: boolean): number {
-  let n = 0;
-  for (let i = 0; i < pool.cap; i++) {
-    if (pool.alive[i] === 0) continue;
-    if (bossOnly) {
-      const kind = pool.kind[i];
-      if (kind >= ENEMIES.length || ENEMIES[kind].boss !== true) continue;
-    }
-    const dx = pool.x[i] - world.player.x;
-    const dy = pool.y[i] - world.player.y;
-    if (Math.abs(dx) <= TUNE.viewHalfX && Math.abs(dy) <= TUNE.viewHalfY) continue;
-    const d2 = dx * dx + dy * dy;
-    if (n === limit && d2 >= pickD2[limit - 1]) continue;
-
-    let at = n < limit ? n++ : limit - 1;
-    while (at > 0 && pickD2[at - 1] > d2) {
-      pickD2[at] = pickD2[at - 1];
-      pickIdx[at] = pickIdx[at - 1];
-      at--;
-    }
-    pickD2[at] = d2;
-    pickIdx[at] = i;
-  }
-  return n;
-}
-
-/**
- * Put one marker on the edge of the play area, pointing at its body.
- *
- * The screen-space direction comes out of the world offset (with the depth squeeze above) and
- * is pushed out to the edge of an inset ellipse — a `halfW` x `halfH` oval rather than a
- * rectangle, so a body in a corner gets an arrow that curves in around the corner panels
- * instead of one that hides behind them. Quantised to whole pixels and two degrees, so a fast
- * walk rewrites a transform a few times a second rather than sixty.
- */
-function placeMarker(
-  marker: Marker,
-  dx: number,
-  dy: number,
-  halfW: number,
-  halfH: number,
-): void {
-  const squeezed = dy * FORESHORTEN;
-  const length = Math.sqrt(dx * dx + squeezed * squeezed);
-  if (length <= 0) return;
-  const sx = dx / length;
-  const sy = -squeezed / length;
-
-  const x = Math.round(sx * halfW);
-  const y = Math.round(sy * halfH);
-  const angle = (Math.round((Math.atan2(sx, -sy) * 180) / Math.PI / 2) * 2).toString();
-
-  const at = `translate(${x}px, ${y}px) rotate(${angle}deg)`;
-  if (marker.last !== at) {
-    marker.last = at;
-    marker.node.style.transform = at;
-  }
-}
-
-/** Build a row of edge markers: fixed nodes that get shown and moved, never created. */
-function makeMarkers(parent: HTMLElement, className: string, count: number): Marker[] {
-  const list: Marker[] = [];
-  for (let i = 0; i < count; i++) {
-    list.push({ node: make('i', `edge ${className}`, parent), last: '', shown: '0' });
-  }
-  return list;
-}
 
 export function createHud(root: HTMLElement): Hud {
   /** The view, filled in by the caller on the first tick. */
@@ -718,31 +493,4 @@ export function createHud(root: HTMLElement): Hud {
       }
     },
   };
-}
-
-/**
- * What a hand's gauge says.
- *
- * Three constraints, three readings, and each shows the number the player can act on:
- * a magazine counts rounds, a heat hand says `venting` while it is locked out (its
- * heat is already spent, so the number would be noise), and a charge hand counts the
- * charge left, because that is what decides whether the next shot happens.
- */
-function gaugeText(slot: WeaponSlot, def: WeaponDef): string {
-  if (slot.reload > 0) return 'reloading';
-  if (def.ammo) return `${slot.ammo}/${def.ammo.mag}`;
-  if (def.heat) return slot.venting ? 'venting' : 'heat';
-  if (def.energy) return `${Math.round(slot.energy)}`;
-  return '';
-}
-
-/**
- * How full that gauge is, 0..1: the constraint that is left, not the one that is gone,
- * so every hand reads the same way — a full bar means ready.
- */
-function gaugeFill(slot: WeaponSlot, def: WeaponDef): number {
-  if (def.ammo) return def.ammo.mag > 0 ? slot.ammo / def.ammo.mag : 0;
-  if (def.heat) return def.heat.max > 0 ? Math.max(0, 1 - slot.heat / def.heat.max) : 0;
-  if (def.energy) return def.energy.capacity > 0 ? slot.energy / def.energy.capacity : 0;
-  return 0;
 }

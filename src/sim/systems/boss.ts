@@ -74,10 +74,14 @@ let dropY = 0;
  * the encounter on the floor, and the intermission that carries the run to the next room. A
  * cleared run stops here rather than looping — the last chapter sets `victory` and the drumbeat
  * does not come back, because a run that cannot end is a scoreboard, not a campaign.
+ *
+ * An arena run has no arc to walk: no script to spend, no encounter to open and no next floor to
+ * load, so the whole file stands down for it. The ladder in `content/levels/arena.ts` is the
+ * arena's escalation, and it stops at its last band rather than resolving into a boss.
  */
 export function updateBoss(w: World): void {
   const wave = w.wave;
-  if (w.over || wave.phase === Phase.None || wave.phase === Phase.Cleared) return;
+  if (w.over || w.endless || wave.phase === Phase.None || wave.phase === Phase.Cleared) return;
 
   if (wave.phase === Phase.Script) {
     if (wave.elapsed < levelAt(w.chapter).duration) return;

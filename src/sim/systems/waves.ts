@@ -45,7 +45,7 @@
  */
 
 import { DEFAULT_ENEMY, ENEMIES, enemyIndex } from '../../content/enemies';
-import { ELITES, eliteIndex, levelAt, type BeatDef, type LevelDef } from '../../content/levels';
+import { ELITES, eliteIndex, bandAt, levelAt, type BeatDef } from '../../content/levels';
 import { next, nextInt, range } from '../rng';
 import { DT, TUNE, type World } from '../world';
 import { spawnEnemy } from './enemies';
@@ -160,9 +160,6 @@ export function updateWaves(w: World): void {
   const wave = w.wave;
   if (!wave.running) return;
 
-  const level = levelAt(w.chapter);
-  const hard = level.difficulty;
-
   wave.timeLeft -= DT;
   if (wave.timeLeft <= 0) {
     wave.index++;
@@ -174,6 +171,16 @@ export function updateWaves(w: World): void {
   // index rather than replacing it: the index is the drumbeat's escalation and the HUD's wave
   // count, and both stay readable while a script is what decides the shape of a chapter.
   wave.elapsed += DT;
+
+  // An arena run has no script, so it takes the ladder instead: same rollover, same drumbeat,
+  // with the band's own batch cap, gap and HP price where the chapter's `difficulty` pair is.
+  if (w.endless) {
+    runLadder(w);
+    return;
+  }
+
+  const level = levelAt(w.chapter);
+  const hard = level.difficulty;
 
   for (let n = 0; n < BEATS_PER_TICK; n++) {
     if (wave.script >= level.waves.length) break;
@@ -199,15 +206,48 @@ export function updateWaves(w: World): void {
     wave.tries = 0;
   }
 
+  const rows = level.packs;
+  if (rows.length === 0) return;
+
   wave.timer -= DT;
   for (let n = 0; wave.timer <= 0 && n < BATCHES_PER_TICK; n++) {
     const size = batchSize(wave.index);
-    runFill(w, level, wave.index, size, hard.hp);
+    // The last row carries on for every wave past the end of the list, which is what lets a
+    // chapter be shorter than it is long.
+    const at = wave.index - 1 < rows.length ? wave.index - 1 : rows.length - 1;
+    runFill(w, rows[at], size, hard.hp);
     // Forward by the size of the batch that just went, not by one: the next batch starts
     // where this one ran out, which is what keeps a batch mixed instead of repeating the same
     // five archetypes in the same order every time.
     wave.cursor += size;
     wave.timer += fillGap(wave.index, hard.spawnRate);
+  }
+}
+
+/**
+ * The arena's drumbeat: one band's recipe, at that band's rate, for as long as the run lasts.
+ *
+ * Two things differ from a chapter's fill, and both are because the ladder has no end to pace.
+ * The recipe *cycles* with the cursor instead of being walked once and then pinned to its last
+ * row: a drumbeat that stops changing is a rhythm a player stops hearing, and this one runs for
+ * an hour. And the batch cap, the gap divisor and the HP price come off the band, because the
+ * chapter dials bottom out around wave 25 and a mode that stopped there would be flat for the
+ * rest of the run. `TUNE.batchCap` and `fillGap`'s 0.12 s floor still bound it: the ladder
+ * climbs *inside* the same ceilings every chapter has, which is what keeps "capped counts"
+ * true of the arena rather than a promise the arena made differently.
+ */
+function runLadder(w: World): void {
+  const wave = w.wave;
+
+  wave.timer -= DT;
+  for (let n = 0; wave.timer <= 0 && n < BATCHES_PER_TICK; n++) {
+    const band = bandAt(wave.index);
+    const rows = band.packs;
+    if (rows.length === 0) return;
+    const size = band.batch < TUNE.batchCap ? band.batch : TUNE.batchCap;
+    runFill(w, rows[Math.floor(wave.cursor / size) % rows.length], size, band.hp);
+    wave.cursor += size;
+    wave.timer += fillGap(wave.index, band.rate);
   }
 }
 
@@ -252,20 +292,17 @@ function runBeat(w: World, beat: BeatDef, hpScale: number): boolean {
 }
 
 /**
- * One drumbeat batch: the recipe's next run of archetypes, on a side drawn from the roll.
+ * One drumbeat batch: one recipe row's next run of archetypes, on a side drawn from the roll.
  *
  * The side is rolled rather than authored because the fill has no author. Where the script
  * points, the drumbeat just keeps the floor busy, and a drumbeat that always came from the
  * same side would be a pattern to sit in.
+ *
+ * The row arrives rather than the floor's whole recipe list because a chapter and the arena
+ * pick their row differently — a chapter walks down its list and stops at the bottom, the arena
+ * cycles within the band it is in — while everything past that choice is the same walk.
  */
-function runFill(w: World, level: LevelDef, waveIndex: number, size: number, hpScale: number): void {
-  const rows = level.packs;
-  if (rows.length === 0) return;
-  // The last row carries on for every wave past the end of the list, which is what lets a
-  // chapter be shorter than it is long.
-  const at = waveIndex - 1 < rows.length ? waveIndex - 1 : rows.length - 1;
-  const row = rows[at];
-
+function runFill(w: World, row: readonly string[], size: number, hpScale: number): void {
   landBand = 1 + nextInt(w.rng, SIDE_BANDS);
   let radius = 0;
   for (let i = 0; i < size; i++) {

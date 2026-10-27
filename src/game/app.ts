@@ -40,7 +40,7 @@ import { buildBinds, swapBinds } from '../input/bindings';
 import { InputSampler } from '../input/sampler';
 import { createInputFrame } from '../sim/input';
 import { step } from '../sim/step';
-import { startChapter } from '../sim/systems/levels';
+import { startArena, startChapter } from '../sim/systems/levels';
 import { choosePick, reroll } from '../sim/systems/pickups';
 import { createWorld, type World } from '../sim/world';
 import { createArchive, keepShelf, storeSettings, writeSave, type Shelf } from './appArchive';
@@ -202,7 +202,7 @@ export function createApp(ports: AppPorts): App {
   };
 
   /**
-   * Throw the run away and start a fresh one on chapter `chapter`.
+   * Throw the run away and start a fresh campaign one on chapter `chapter`.
    *
    * `startChapter` rather than `startWaves`: the chapter is what puts a floor under the
    * player, and the shell is the only door that does it (a fresh `World` is empty on
@@ -212,14 +212,33 @@ export function createApp(ports: AppPorts): App {
    *
    * The chapter argument is what lets the chapter grid and the summary's Restart Level
    * reuse this: both start a *run*, at a chosen floor, and neither is a special case.
+   *
+   * It always builds a campaign floor, including when the run it replaces was an arena one —
+   * the chapter grid and the bench's restart both name a chapter, and a chapter named is a
+   * chapter played. The arena's own restart is `restartArena`.
    */
   function restartRun(chapter: number): void {
+    beginRun(false, chapter);
+  }
+
+  /** Throw the run away and start a fresh Endless Arena run. */
+  function restartArena(): void {
+    beginRun(true, 0);
+  }
+
+  /**
+   * The one place a run is rebuilt, so a fresh World, a fresh archive and the play scene are
+   * always said together.
+   *
+   * A new clock and a new chapter tally, but the shelf carries over: restarting the run does not
+   * un-write the file that is still sitting there.
+   */
+  function beginRun(endless: boolean, chapter: number): void {
     world = createWorld(ports.seed);
     world.autoFire = settings.autoFire;
-    // A new clock and a new chapter tally, but the shelf carries over: restarting the run
-    // does not un-write the file that is still sitting there.
     archive = createArchive(archive.onShelf);
-    startChapter(world, chapter);
+    if (endless) startArena(world);
+    else startChapter(world, chapter);
     scene = 'playing';
   }
 
@@ -312,7 +331,11 @@ export function createApp(ports: AppPorts): App {
     },
     backend: ports.backend,
     get mode() {
-      return rig === null ? 'campaign' : 'bench';
+      // A bench window is a mode rather than a scene, and so is the arena: the scene is still
+      // `playing` in both. The two never overlap (a rig builds a campaign floor) and the rig
+      // wins the read if they somehow did, because a page running a window is measuring.
+      if (rig !== null) return 'bench';
+      return world.endless ? 'arena' : 'campaign';
     },
     get errors() {
       return errorCount;
@@ -331,6 +354,7 @@ export function createApp(ports: AppPorts): App {
     world: () => world,
     frame,
     restart: restartRun,
+    arenaRun: restartArena,
     arm(armed) {
       rig = armed;
     },
@@ -415,11 +439,27 @@ export function createApp(ports: AppPorts): App {
           if (scene === 'menu') restartRun(0);
           break;
         case 'restart':
-          // A new run from the first floor; `restartLevel` is the same act on this floor.
-          if (scene !== 'menu') restartRun(0);
+          // A new run from the first floor; `restartLevel` is the same act on this floor. In the
+          // arena there is one floor and it does not end, so both mean the same thing there:
+          // start another arena run. Neither one leaves the mode, which is what a player asking
+          // for "again" means.
+          if (scene === 'menu') break;
+          if (world.endless) restartArena();
+          else restartRun(0);
           break;
         case 'restartLevel':
-          if (scene !== 'menu') restartRun(world.chapter);
+          if (scene === 'menu') break;
+          if (world.endless) restartArena();
+          else restartRun(world.chapter);
+          break;
+        case 'arena':
+          // The Endless Arena, from the title and from the victory panel — both clickable, and
+          // deliberately from no key: a mode you can enter by accident from the screen you land
+          // on after winning is a mode nobody chose. Locked until the campaign is beaten, and
+          // checked here rather than only hidden in the panel, because a scenario (and a
+          // devtools click) can reach a button that is not there.
+          if (!meta.arenaUnlocked) break;
+          if (scene === 'menu' || scene === 'victory') restartArena();
           break;
         case 'resume':
           if (scene === 'paused') scene = 'playing';

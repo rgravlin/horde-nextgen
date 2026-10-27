@@ -23,7 +23,7 @@
  */
 
 import { baseStats, POWERUPS } from '../../content/powerups';
-import { eliteRosterAt, levelAt } from '../../content/levels';
+import { arenaRosterAt, bandAt, eliteRosterAt, levelAt } from '../../content/levels';
 import { next, nextInt } from '../rng';
 import { DT, TUNE, type World } from '../world';
 
@@ -197,22 +197,33 @@ export function travelScale(w: World, ex: number, ey: number, eliteGait: number)
 }
 
 /**
- * The elite variant this chapter rolls for one body, as an index into `ELITES`, or -1
+ * The elite variant this floor rolls for one body, as an index into `ELITES`, or -1
  * for a plain one.
  *
- * Draws at most one rng number per body, and none at all on a chapter that declares no
+ * Draws at most one rng number per body, and none at all on a floor that declares no
  * elites — which is what keeps every seeded run predating the variants bit-for-bit the
  * run it already was. The roster comes pre-resolved out of `content/levels/` so a
  * spawn never probes a name map.
+ *
+ * The chapter's pair and the arena's band pair are read the same way on purpose: the arena
+ * has no chapter, and asking its ladder at the current wave is the only way to price a run
+ * that never runs out of waves. An arena band always declares a chance, so a body there
+ * really does pay one rng number per body, where chapter one pays none.
  */
 export function rollElite(w: World, roster: readonly number[]): number {
-  const chance = levelAt(w.chapter).eliteChance;
+  const chance = w.endless ? bandAt(w.wave.index).eliteChance : levelAt(w.chapter).eliteChance;
   if (chance <= 0 || roster.length === 0) return -1;
   if (next(w.rng) >= chance) return -1;
   return roster[nextInt(w.rng, roster.length)];
 }
 
-/** The roster the current chapter rolls, kept next to the roll so the two cannot drift. */
+/**
+ * The roster the current floor rolls, kept next to the roll so the two cannot drift.
+ *
+ * Paired with `rollElite` by wave index rather than chapter index so an arena run's elites
+ * come from the band it is standing in — that pairing is the only reason a name in
+ * `arena.ts` can be changed without reading the spawner.
+ */
 export function eliteRoster(w: World): readonly number[] {
-  return eliteRosterAt(w.chapter);
+  return w.endless ? arenaRosterAt(w.wave.index) : eliteRosterAt(w.chapter);
 }

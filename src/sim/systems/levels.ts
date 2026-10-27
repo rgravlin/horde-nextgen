@@ -22,7 +22,7 @@
  */
 
 import { ENEMIES } from '../../content/enemies';
-import { levelAt } from '../../content/levels';
+import { ARENA, levelAt, type ArenaDef, type LevelDef } from '../../content/levels';
 import { acidAt, installLayout, installZones, pointBlocked, pushOut, pushedX, pushedY, tickZones } from './obstacles';
 import { DT, Ev, Tele, TUNE, pushEvent, setArena, type World } from '../world';
 import { hurtPlayer } from './enemyProjectiles';
@@ -48,6 +48,11 @@ export const Phase = {
   Intermission: 3,
   /** Every chapter in the game has been cleared. */
   Cleared: 4,
+  /**
+   * An Endless Arena run: the drumbeat runs forever off the ladder in `content/levels/arena.ts`
+   * and there is no script and no encounter, so `systems/boss.ts` stands down for the whole run.
+   */
+  Endless: 5,
 } as const;
 
 /**
@@ -57,20 +62,50 @@ export const Phase = {
  * this one is cleared. It replaces the floor rather than adding to it: a chapter's layout is
  * authored as a whole room, and a room with the previous room's walls still standing in it is
  * a room that cannot be read.
+ *
+ * It also clears `endless`, which is the other half of "replaces the floor": a restart pressed
+ * inside the arena goes back to chapter one, and chapter one's script must not be run at the
+ * arena's ladder in the arena's room.
  */
 export function startChapter(w: World, index: number): void {
   const at = index < 0 ? 0 : index;
-  const level = levelAt(at);
-  w.chapter = at;
-  w.wave.phase = Phase.Script;
-  w.wave.clearTime = 0;
+  startFloor(w, levelAt(at), at, false);
+}
 
-  // A chapter loads with no encounter on the floor and no chapter yet behind the player. Both
-  // are written here rather than cleared by whoever is about to load the room, because the same
-  // function serves a first chapter, a restart and the next chapter, and a `victory` left over
-  // from the run before would end this one before it started.
+/**
+ * Put the Endless Arena under the player's feet and start its ladder.
+ *
+ * The arena is a *mode* rather than an eleventh floor, so this is the other door into
+ * `startFloor`: one room, no script, no encounter, and a drumbeat that climbs a band ladder
+ * instead of a chapter's. `chapter` stays 0 on purpose — the chapter grid, `bestTimes` and
+ * every fingerprint of a campaign run read it, and the arena does not play one of the ten.
+ */
+export function startArena(w: World): void {
+  startFloor(w, ARENA, 0, true);
+}
+
+/**
+ * Install one floor and start the clock under it.
+ *
+ * The room first, then what stands in it: the arena is the fact the layout was drawn around,
+ * and bodies have to be re-seated inside whichever room this floor is. A chapter loads with no
+ * encounter on the floor and no chapter behind the player — both are written here rather than
+ * cleared by whoever is about to load the room, because the same function serves a first
+ * chapter, a restart, the next chapter and the arena, and a `victory` left over from the run
+ * before would end this one before it started.
+ *
+ * The clock is reset through `startWaves` rather than written here: the recipe cursor starting
+ * at the top of the floor's first pack is that function's meaning, and a restart that skipped it
+ * would resume a run's drumbeat halfway down its own recipe.
+ */
+function startFloor(w: World, floor: LevelDef | ArenaDef, chapter: number, endless: boolean): void {
+  w.chapter = chapter;
+  w.endless = endless;
+  w.wave.phase = endless ? Phase.Endless : Phase.Script;
+  w.wave.clearTime = 0;
   w.chapterComplete = false;
   w.victory = false;
+
   const boss = w.boss;
   boss.alive = false;
   boss.hp = 0;
@@ -78,16 +113,11 @@ export function startChapter(w: World, index: number): void {
   boss.name = '';
   boss.skips = 0;
 
-  // The room first, then what stands in it: the arena is the fact the layout was drawn
-  // around, and bodies have to be re-seated inside whichever room this chapter is.
-  setArena(w, level.size);
-  installLayout(w, level.props);
-  installZones(w, level.hazards);
+  setArena(w, floor.size);
+  installLayout(w, floor.props);
+  installZones(w, floor.hazards);
   settle(w);
 
-  // The clock is reset through `startWaves` rather than written here: the recipe cursor
-  // starting at the top of the chapter's first pack is that function's meaning, and a restart
-  // that skipped it would resume a chapter's drumbeat halfway down its own recipe.
   startWaves(w, 1);
 }
 

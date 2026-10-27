@@ -91,8 +91,8 @@ they came from and return there. `settings`/`history` are reachable from both `m
 | `neonhorde.settings.v1` | master/sfx/music volume, quality tier (`auto`/low/med/high), resolution scale, auto-fire, shake amount | on change (nothing writes it until the settings screen exists) |
 | `neonhorde.meta.v1` | unlocked chapters, best *time* per chapter (`-1` = never cleared), run-history rows for the history screen (last 50: date, chapter, time, kills, score, weapon ids) | at a chapter's end, and when a run ends |
 
-`serialize(world)` in `src/sim/serialize.ts` only produces and consumes the snapshot object; the localStorage read
-and write happen in `src/game/persistence.ts` through the `StorageLike` port (`{getItem, setItem, removeItem}`, so a
+`serialize(world)` in `src/sim/serialize/` only produces and consumes the snapshot object; the localStorage read
+and write happen in `src/game/persistence/` through the `StorageLike` port (`{getItem, setItem, removeItem}`, so a
 unit test hands it a `Map`). A `v1` payload that fails to parse or shape-check is discarded (`deserialize` returns
 `null`, never throws) and counted through the module's `ProblemSink`, which is what feeds `errors` — never fatal,
 never silent. Absence is not a problem: no key, or an empty one, is a first launch and reads back as the defaults.
@@ -111,7 +111,7 @@ The points below are load-bearing rather than incidental, so they are recorded h
   per tick plus its aim pair, and `playReplay` rebuilds the run by stepping it, which is what keeps a chapter at
   tens of kilobytes and lets a changed build be diffed against a recorded run by hash. It assumes default pool
   sizes; a save carries its own.
-- **The autosave clock counts play seconds.** `AutosaveTimer` in `persistence.ts` is fed `world.time`, which only
+- **The autosave clock counts play seconds.** `AutosaveTimer` in `persistence/autosave.ts` is fed `world.time`, which only
   moves while the sim steps, so a pause, a level-up freeze and a frame that ran out of its step cap all hold the
   interval still — a wall-clock timer would spend a long pause writing saves and call that autosave. It reports due
   every 30 s and at a chapter's end, keyed by *which* chapter ended, because the intermission is 4 s and the

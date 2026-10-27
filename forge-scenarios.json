@@ -65,5 +65,23 @@
       { "state": { "scene": "==playing", "player.x": ">2", "tick": ">60", "errors": "==0" } },
       { "shot": "resume" }
     ]
+  },
+  {
+    "name": "arena",
+    "path": "/?seed=7&arena=1",
+    "steps": [
+      { "wait": 5000 },
+      { "state": { "mode": "==arena", "scene": "==playing" } },
+      { "hold": ["KeyD", 2000] },
+      { "wait": 9000 },
+      { "press": "1" },
+      { "wait": 400 },
+      { "press": "1" },
+      { "wait": 600 },
+      { "state": { "mode": "==arena", "scene": "==playing", "enemies.count": ">0" } },
+      { "shot": "arena" },
+      { "wait": 8000 },
+      { "state": { "mode": "==arena", "enemies.count": ">0", "kills": ">0", "errors": "==0" } }
+    ]
   }
 ]

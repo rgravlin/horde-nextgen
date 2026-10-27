@@ -23,16 +23,30 @@
  * row prints the value the player has *now*, never the one a click would give them: a panel that
  * opens showing the next rung down reads as a panel that is already off by one.
  *
- * **The rebind listener is capture-phase** on the window, so it sees a key before the input
- * sampler's own `keydown` listener does and can swallow it: a key pressed to *name* a binding must
- * not also be spent *as* that binding, which is how an Escape meant as "cancel this row" would
- * otherwise also close the panel it was cancelling out of.
+ * The two things this file does not hold are the two that have a rule of their own: the row and
+ * bind tables (`rows.ts`, content read once a tab opens) and the rebind listener
+ * (`listen.ts`, the only capture-phase listener in the overlay).
  */
 
-import { LEVELS } from '../content/levels';
-import { BIND_DEFS, describeBinds, describeSource, type BindAction, type BindTable } from '../input/bindings';
-import { NO_CLEAR, type Meta, type Settings } from '../game/persistence';
-import type { HudCommand, HudView } from './hud';
+import { LEVELS } from '../../content/levels';
+import { describeBinds, describeSource, type BindAction, type BindTable } from '../../input/bindings';
+import { NO_CLEAR, type Meta } from '../../game/persistence';
+import type { HudCommand, HudView } from '../hud';
+import { listenForSource } from './listen';
+import {
+  BIND_LABELS,
+  BIND_ROWS,
+  HISTORY_HEADS,
+  PAUSE_HINT,
+  SETTING_ROWS,
+  TABS,
+  clockTime,
+  nextStop,
+  readable,
+  type SettingRow,
+  type Tab,
+} from './rows';
+
 
 /** What one built panel can do: repaint itself from the live view. */
 interface Panel {
@@ -53,176 +67,6 @@ function text(tag: string, className: string, parent: HTMLElement, value: string
   node.textContent = value;
   return node;
 }
-
-/**
- * A pool id's caption, for the two places that list weapons by what they are called.
- *
- * An id is a key (`plasmaRepeater`) and a caption is a caption (`Plasma Repeater`); splitting the
- * camel case is the same trick `handLabel` uses in `hud.ts`, and it means a new weapon needs no
- * caption written for it either.
- */
-function readable(id: string): string {
-  return id.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-}
-
-/** `0:43` for a chapter time, `--` for one that has never happened. */
-function clockTime(seconds: number): string {
-  if (seconds === NO_CLEAR || !(seconds >= 0)) return '--';
-  const whole = Math.round(seconds);
-  const m = Math.floor(whole / 60);
-  const s = whole % 60;
-  return `${m}:${s < 10 ? '0' : ''}${s}`;
-}
-
-/** Percent, for the four rows that are a gain or a scale. */
-function percent(v: number): string {
-  return `${Math.round(v * 100)}%`;
-}
-
-/** A dial's five stops, ending where it started. */
-const LEVELS_STOPS: readonly number[] = [0, 0.25, 0.5, 0.75, 1];
-
-/** Resolution has finer stops because its floor is 0.5 rather than 0. */
-const SCALE_STOPS: readonly number[] = [0.5, 0.6, 0.7, 0.8, 0.9, 1];
-
-const QUALITY_STOPS = ['auto', 'low', 'medium', 'high', 'ultra'] as const;
-
-const PARTICLE_STOPS = ['off', 'low', 'medium', 'full'] as const;
-
-/** The four tabs, in the order DESIGN.md lists them. */
-const TABS = ['audio', 'video', 'controls', 'gameplay'] as const;
-type Tab = (typeof TABS)[number];
-
-/**
- * One row of the Settings panel.
- *
- * `stops` is the whole ladder the row walks and `at` says where the player currently sits on it,
- * so a click can step *from* there. `at` may point at a rung the value is not: `shake` ships at
- * 0.7, which sits between two of the dial's stops, and the row prints the real number while the
- * click moves to the next stop up.
- */
-interface SettingRow {
-  readonly key: keyof Settings;
-  readonly label: string;
-  readonly hint: string;
-  readonly tab: Tab;
-  readonly stops: readonly (string | number | boolean)[];
-  at(settings: Settings): number;
-  /** What the row prints: the current value, never the next one. */
-  current(settings: Settings): string;
-}
-
-/** Where a value sits on a ladder, or the nearest rung when it is between two. */
-function nearest(stops: readonly number[], v: number): number {
-  let best = 0;
-  let bestGap = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < stops.length; i++) {
-    const gap = Math.abs(stops[i] - v);
-    if (gap < bestGap) {
-      bestGap = gap;
-      best = i;
-    }
-  }
-  return best;
-}
-
-function nextStop(row: SettingRow, s: Settings): string | number | boolean {
-  return row.stops[(row.at(s) + 1) % row.stops.length];
-}
-
-/** A gain dial: five stops, read back as a percent. */
-function dial(
-  key: keyof Settings,
-  label: string,
-  hint: string,
-  tab: Tab,
-  stops: readonly number[] = LEVELS_STOPS,
-): SettingRow {
-  return {
-    key,
-    label,
-    hint,
-    tab,
-    stops,
-    at: (s) => nearest(stops, s[key] as number),
-    current: (s) => percent(s[key] as number),
-  };
-}
-
-function toggle(key: keyof Settings, label: string, hint: string, tab: Tab): SettingRow {
-  return {
-    key,
-    label,
-    hint,
-    tab,
-    stops: [false, true],
-    at: (s) => (s[key] as boolean ? 1 : 0),
-    current: (s) => (s[key] as boolean ? 'on' : 'off'),
-  };
-}
-
-function ladder(
-  key: keyof Settings,
-  label: string,
-  hint: string,
-  tab: Tab,
-  stops: readonly string[],
-): SettingRow {
-  return {
-    key,
-    label,
-    hint,
-    tab,
-    stops,
-    at: (s) => {
-      const at = stops.indexOf(s[key] as never);
-      return at >= 0 ? at : 0;
-    },
-    current: (s) => String(s[key]),
-  };
-}
-
-/** Every row the Settings panel shows, in tab order. */
-const SETTING_ROWS: readonly SettingRow[] = [
-  toggle('muted', 'mute', 'silence every gain at once', 'audio'),
-  dial('master', 'master', 'everything, after the mute', 'audio'),
-  dial('sfx', 'gunfire', 'weapons, impacts, the blast on a big one', 'audio'),
-  dial('music', 'music', 'the bed the gunfire sits on', 'audio'),
-  ladder('quality', 'quality', 'what the machine picked, or the tier you picked over it', 'video', QUALITY_STOPS),
-  {
-    key: 'resolutionScale',
-    label: 'resolution',
-    hint: "of native, under the tier's own ceiling",
-    tab: 'video',
-    stops: SCALE_STOPS,
-    at: (s) => nearest(SCALE_STOPS, s.resolutionScale),
-    current: (s) => percent(s.resolutionScale),
-  },
-  toggle('shadows', 'shadows', 'needs a tier that has them', 'video'),
-  toggle('bloom', 'bloom + chromatic', 'the glow, and the punch on a big hit', 'video'),
-  ladder('particles', 'particles', 'of the tier\u2019s spark budget', 'video', PARTICLE_STOPS),
-  toggle('damageNumbers', 'damage numbers', 'the floating mono numbers', 'video'),
-  toggle('autoFire', 'auto-fire', 'shoots on its own when something is close', 'gameplay'),
-  dial('shake', 'screen shake', 'this shipped at 70%', 'gameplay'),
-];
-
-/** The binds the Controls tab offers, in `BIND_DEFS` order. */
-const BIND_ROWS: readonly BindAction[] = BIND_DEFS.map((def) => def.action);
-
-/**
- * The keys the pause panel quotes.
- *
- * Six of the thirteen, because the panel is 380px wide and seven buttons tall and the rest are
- * not used during a fight. DESIGN.md's "one-line hint", read from the live map so a rebind shows
- * up here too.
- */
-const PAUSE_HINT: readonly BindAction[] = ['up', 'left', 'dash', 'fire', 'swap', 'pause'];
-
-/** The caption each bind row shows, from the table rather than written out here. */
-const BIND_LABELS = new Map<BindAction, string>(BIND_DEFS.map((def) => [def.action, def.label]));
-
-/** The columns of the run-history table. */
-const HISTORY_HEADS = ['time', 'kills', 'score', 'chapter', 'carried'] as const;
 
 export interface Screens {
   /** Repaint whatever the scene currently shows. Called once per rendered frame. */
@@ -289,6 +133,11 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
   const continueBtn = control(titleStack, 'Continue', 'continue', () => view().command('load'));
   continueBtn.hidden = true;
   control(titleStack, 'Start  [Enter]', 'start', () => view().command('start'));
+  // The mode a finished campaign unlocks. Hidden rather than disabled: a locked arena is not a
+  // floor you can almost see, and the shell refuses the command too (`game/app.ts`), so a click
+  // through devtools lands nowhere.
+  const arenaTitle = control(titleStack, 'Endless Arena', 'arena', () => view().command('arena'));
+  arenaTitle.hidden = true;
   control(titleStack, 'Chapters', 'chapters', () => view().command('levelselect'));
   control(titleStack, 'Settings', 'settings', () => view().command('settings'));
   control(titleStack, 'History', 'history', () => view().command('history'));
@@ -297,9 +146,12 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
     id: 'menu',
     sync(v) {
       // The one thing here that can move while the title sits open: a save gets written by the
-      // run the player is watching end, and when the machine goes back to the title.
+      // run the player is watching end, and when the machine goes back to the title. Same for
+      // the arena door, which a win writes into the meta on the frame it happens.
       const hide = !v.hasSave();
       if (continueBtn.hidden !== hide) continueBtn.hidden = hide;
+      const locked = !v.meta.arenaUnlocked;
+      if (arenaTitle.hidden !== locked) arenaTitle.hidden = locked;
     },
   });
 
@@ -521,7 +373,7 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
         text('span', 'tcell', line, clockTime(row.time));
         text('span', 'tcell', line, String(row.kills));
         text('span', 'tcell', line, String(row.score));
-        text('span', 'tcell', line, `C${row.chapter + 1}`);
+        text('span', 'tcell', line, row.endless ? 'arena' : `C${row.chapter + 1}`);
         text('span', 'tcell wide', line, row.weapons.map(readable).join(', ') || 'nothing');
       }
     },
@@ -576,10 +428,21 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
       return text('b', 'num', row, '');
     });
     const buttons7 = stack(node);
-    for (const [label, action, cmd] of buttons) control(buttons7, label, action, () => view().command(cmd));
+    const buttons8 = buttons.map(([label, action, cmd]) => ({
+      node: control(buttons7, label, action, () => view().command(cmd)),
+      // The arena door is the only one that has to be re-checked while the panel is up: the win
+      // that unlocks it is written into the meta at the end of the frame that opened this panel,
+      // so a once-at-open check would hide the door the victory is meant to open.
+      gated: cmd === 'arena',
+    }));
     panels.push({
       id,
       sync(v, fresh) {
+        for (const b of buttons8) {
+          if (!b.gated) continue;
+          const locked = !v.meta.arenaUnlocked;
+          if (b.node.hidden !== locked) b.node.hidden = locked;
+        }
         if (!fresh) return;
         const w = v.world;
         set(head, id === 'victory' ? 'The floor is yours' : w.player.alive ? 'Run over' : 'You died');
@@ -588,7 +451,16 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
         set(cells[2], `${w.time.toFixed(1)} s`);
         set(cells[3], `LV ${w.player.level}`);
         const at = Math.min(LEVELS.length - 1, Math.max(0, w.chapter));
-        set(cells[4], id === 'victory' ? 'all ten chapters' : `Chapter ${w.chapter + 1} \u2014 ${LEVELS[at].name}`);
+        // The arena is not a chapter, so naming chapter one under it would be a lie about where
+        // the run was played (`layoutOf` in the sim is the same fact).
+        set(
+          cells[4],
+          id === 'victory'
+            ? 'all ten chapters'
+            : w.endless
+              ? 'Endless Arena'
+              : `Chapter ${w.chapter + 1} \u2014 ${LEVELS[at].name}`,
+        );
       },
     });
   }
@@ -601,6 +473,7 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
   ]);
 
   statsPanel('victory', ['score', 'kills', 'time', 'level', 'where'], [
+    ['Endless Arena', 'arena', 'arena'],
     ['Restart run  [Enter]', 'restart', 'restart'],
     ['Chapters', 'chapters', 'levelselect'],
     ['Menu', 'menu', 'menu'],
@@ -619,36 +492,5 @@ export function createScreens(root: HTMLElement, view: () => HudView): Screens {
         if (p.id === v.scene) p.sync(v, fresh);
       }
     },
-  };
-}
-
-/**
- * Listen for the next key or pointer button, for the rebind rows.
- *
- * Capture phase and `stopImmediatePropagation`: the sampler listens on the same window, and
- * without both a rebind spends the key twice — once as a name, once as the action. Returning a
- * cancel matches the sampler's own `InputHost` rule that a listener is handed back rather than
- * leaked.
- */
-export function listenForSource(onSource: (source: string) => void): () => void {
-  if (typeof window === 'undefined') return () => {};
-
-  const key = (e: KeyboardEvent): void => {
-    if (e.repeat) return;
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    if (e.code) onSource(e.code);
-  };
-  const down = (e: PointerEvent): void => {
-    e.preventDefault();
-    e.stopImmediatePropagation();
-    onSource(`Mouse${e.button}`);
-  };
-
-  window.addEventListener('keydown', key, true);
-  window.addEventListener('pointerdown', down, true);
-  return () => {
-    window.removeEventListener('keydown', key, true);
-    window.removeEventListener('pointerdown', down, true);
   };
 }

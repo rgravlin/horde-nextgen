@@ -118,7 +118,7 @@ Three versioned JSON keys in `localStorage`, all under the app's own name:
 |---|---|
 | `neonhorde.save.v1` | the run you can come back to: seed, chapter, tick, wave clock, the player, both weapon hands, power-ups, score and kills, plus the floors and the pools byte for byte |
 | `neonhorde.settings.v1` | volumes, quality tier, resolution scale, auto-fire and shake. Read today, written when the settings screen lands |
-| `neonhorde.meta.v1` | unlocked chapters, best time per chapter, and the last 50 runs for the history screen |
+| `neonhorde.meta.v1` | unlocked chapters, best time per chapter, whether the Endless Arena is unlocked, and the last 50 runs for the history screen |
 
 A run is written every 30 seconds of *play* — a pause or a level-up freeze holds that clock
 still, so time spent reading the pause menu costs nothing — at the end of every chapter, and
@@ -309,6 +309,35 @@ that came down inside cover or inside the eyeline. When you write a beat, leave 
 eight seconds inside `duration` and remember the pool stops at 2,048 bodies: a chapter that
 runs longer or spawns faster than its neighbours needs its `spawnRate` checked against a run,
 not against the table.
+### The Endless Arena — `src/content/levels/arena.ts`, read by `src/sim/systems/{levels,waves,powerups}.ts`
+
+The arena is a mode, not an eleventh chapter: one 56 m floor, one escalation ladder, no wave
+script to walk and no encounter to clear, so there is nothing to win and no `duration` to run out
+of. It is deliberately not a row in `LEVELS` — that array is the chapter grid, `bestTimes` and the
+unlock count are indexed by it, and a run that never clears would have nothing to write into a
+per-chapter column — so it lives beside the chapters as a floor plus six bands, and
+`world.endless` is the flag that says a run is one. That flag picks the floor (`startArena`),
+which pressure table the spawner reads (`bandAt`) and whether an elite roll happens at all.
+
+Pressure is a rate rather than a cap. Each band carries a batch size, a gap divisor, an HP price
+and an elite rate, and the last one stops rather than climbing on forever: its drumbeat already
+asks for about ninety bodies a second, past which spawns land in a full 2,048-body pool, and a
+run that cannot be lost is not a run. `tests/unit/arena.test.ts` pins that the rungs rise —
+batch, gap divisor, HP price and elite rate each higher at the top than at the bottom — that the
+top rung is a rung and not a slope (`bandAt(400)` is still Annihilation, every batch still
+inside `TUNE.batchCap`), that the floor keeps filling ninety seconds past it, and that a long run
+of steps never reports a victory.
+
+Two doors in, and both are earned. **Endless Arena** appears on the victory panel and on the
+title, shown only once the meta file has a win in it — that is what `arenaUnlocked` under
+`neonhorde.meta.v1` is for, because the mode's first band is the Kill Floor's pressure and
+nothing before it teaches that. `__forgeDebug.arena()`, and the `?arena=1` URL knob that calls it,
+start the mode without a saved win: the scripted door exists so the `arena` scenario in
+`forge-scenarios.json` can play a run it has not earned, and it goes through the same
+`startArena` the menu button does rather than editing state. Inside an arena run both restart keys
+start another arena run; the only way out is the menu. On death the summary shows the same five
+numbers as a chapter run with "Endless Arena" where the chapter name goes.
+
 ### A song, and a sound — `src/audio/`
 
 The soundtrack is three `SongDef`s in `src/audio/songs.ts`, and `CHAPTER_SONGS` says which of
