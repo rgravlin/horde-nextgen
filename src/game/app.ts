@@ -9,6 +9,13 @@
  * the sim's own entry points (`step`, `choosePick`, `grantXp`, `spawnEnemy`), so a
  * run stays reproducible from its seed.
  *
+ * Four files sit beside it, split off by what they answer rather than by size:
+ * `appTypes.ts` holds the shapes this shell shares with `main.ts` and the scenarios (plus
+ * `snapshotSettings`), `appState.ts` paints a frame of them out of a live `StateHost`,
+ * `appDebug.ts` builds the `__forgeDebug` hooks, and `appArchive.ts` keeps the storage in
+ * step with the run. What stays here is the sequence: which scene a frame leaves, when the
+ * sim is not run at all, and which door each command goes through.
+ *
  * The pieces it talks to are injected, not imported at runtime, so a headless
  * test can drive a whole run:
  *
@@ -25,74 +32,33 @@
  * looks like either; `serialize` owns that.
  *
  * Nothing here allocates in the steady state: the frame, the command bits, the
- * clock, the frame report and the step callback are all allocated once with the app.
+ * clock, the frame report, the shelf, the state host and the step callback are all
+ * allocated once with the app.
  */
 
-import { ENEMIES } from '../content/enemies';
-import { LEVELS } from '../content/levels';
-import { POWERUPS } from '../content/powerups';
-import { WEAPONS } from '../content/weapons';
-import { BIND_DEFS, buildBinds, swapBinds, type BindAction, type BindTable } from '../input/bindings';
-import type { PadSource } from '../input/gamepad';
+import { buildBinds, swapBinds } from '../input/bindings';
 import { InputSampler } from '../input/sampler';
-import type { View } from '../render/renderer';
 import { createInputFrame } from '../sim/input';
-import { createRng, next } from '../sim/rng';
 import { step } from '../sim/step';
-import { bossesAlive } from '../sim/systems/boss';
-import { spawnEnemy } from '../sim/systems/enemies';
-import { awardXp, choosePick, reroll } from '../sim/systems/pickups';
 import { startChapter } from '../sim/systems/levels';
-import { createWorld, loadSlot, type World } from '../sim/world';
-import { createBenchRig, type BenchOptions, type BenchRig } from './bench';
+import { choosePick, reroll } from '../sim/systems/pickups';
+import { createWorld, type World } from '../sim/world';
+import { createArchive, keepShelf, storeSettings, writeSave, type Shelf } from './appArchive';
+import { createDebug } from './appDebug';
+import { buildState, type StateHost } from './appState';
 import { createClock, createFrameReport, runFrame } from './loop';
+import type { BenchRig } from './bench';
 import {
-  autosaveDue,
-  clearSave,
-  createAutosaveTimer,
   defaultMeta,
   defaultSettings,
   hasSave,
   isChapterUnlocked,
-  loadMeta,
   loadRun,
-  markAutosaved,
-  recordRunEnd,
-  saveMeta,
-  saveRun,
-  saveSettings,
-  type AutosaveTimer,
-  type Meta,
-  type ParticlesSetting,
   type ProblemSink,
-  type QualitySetting,
   type Settings,
-  type StorageLike,
 } from './persistence';
-import type { Hud, HudCommand, HudView } from '../ui/hud';
-import type { AudioEngine } from '../audio/synth';
-
-/**
- * The scenes this shell runs.
- *
- * Only `playing` advances the simulation; every other id draws a frozen frame, which is what
- * "the game freezes" means here and what lets a pause hold a thousand bodies mid-charge without a
- * single position changing (ARCHITECTURE.md "Scene state machine").
- *
- * Four of them are panels rather than states of a run — `levelselect`, `settings`, `history` and
- * `victory` — and each remembers the screen it was opened from, so `back` returns to the pause
- * panel from the pause panel and to the title from the title.
- */
-export type SceneId =
-  | 'menu'
-  | 'playing'
-  | 'levelup'
-  | 'paused'
-  | 'summary'
-  | 'victory'
-  | 'levelselect'
-  | 'settings'
-  | 'history';
+import type { HudView } from '../ui/hud';
+import type { App, AppPorts, SceneId } from './appTypes';
 
 /** A frame's worth of scene-level key presses, drained once by `takeCommands`. */
 interface CommandBits {
@@ -101,242 +67,8 @@ interface CommandBits {
   reroll: boolean;
 }
 
-export interface ForgeWeapon {
-  id: string;
-  family: string;
-  /** Rounds in hand; 0 for a weapon that has no magazine. */
-  ammo: number;
-  /** Heat on the barrel, 0 to the def's `max`; 0 for a weapon that does not run hot. */
-  heat: number;
-  /** Charge in hand, 0 to the def's `capacity`; 0 for a weapon that is not charged. */
-  energy: number;
-  /** The barrel is venting, which is why the hand is not firing. */
-  venting: boolean;
-  reloading: boolean;
-}
-
-/**
- * What `__forgeState().settings` reports.
- *
- * A snapshot rather than the whole `Settings`, and only the four knobs a browser scenario has
- * reason to move: the two that change what is drawn, the trigger rule, and the shake. A test that
- * turns a dial and reads it back on the next page load is the only proof that a setting is
- * *stored* rather than merely applied, and this is the seam it reads through.
- */
-export interface SettingsSnapshot {
-  quality: QualitySetting;
-  particles: ParticlesSetting;
-  damageNumbers: boolean;
-  autoFire: boolean;
-  shake: number;
-  /** The live key map: each action against its sources, space-joined. */
-  binds: Record<string, string>;
-}
-
-/** Build one, from the settings and the table compiled out of them. */
-export function snapshotSettings(settings: Settings, table: BindTable): SettingsSnapshot {
-  const binds: Record<string, string> = {};
-  for (const def of BIND_DEFS) binds[def.action] = table.sourcesOf(def.action).join(' ');
-  return {
-    quality: settings.quality,
-    particles: settings.particles,
-    damageNumbers: settings.damageNumbers,
-    autoFire: settings.autoFire,
-    shake: settings.shake,
-    binds,
-  };
-}
-
-/** The exact `window.__forgeState()` shape from TECH.md "State for checks". */
-export interface ForgeState {
-  scene: SceneId;
-  backend: 'webgpu' | 'webgl2' | 'none';
-  tick: number;
-  chapter: number;
-  mode: 'campaign' | 'arena' | 'bench';
-  player: {
-    x: number;
-    y: number;
-    hp: number;
-    maxHp: number;
-    shield: number;
-    level: number;
-    xp: number;
-    dashReady: boolean;
-    alive: boolean;
-  };
-  wave: { index: number; timeLeft: number; bossAlive: boolean };
-  /**
-   * The chapter's encounter, for the boss plate and the top-centre bar: `hp` and `maxHp` are
-   * the combined total across every body of the encounter (a chapter is allowed to end on more
-   * than one), and `name` is the lead body's id. All quiet when nothing is on the floor.
-   */
-  boss: { alive: boolean; name: string; hp: number; maxHp: number };
-  /** The encounter is dead and the next floor has not loaded yet. */
-  chapterComplete: boolean;
-  /** Every chapter has fallen, so the run is won. */
-  victory: boolean;
-  score: number;
-  kills: number;
-  enemies: {
-    count: number;
-    byType: Record<string, number>;
-    nearest: Array<{ type: string; x: number; y: number; hp: number }>;
-  };
-  weapons: ForgeWeapon[];
-  activeWeapon: string;
-  powerups: Array<{ id: string; tier: number }>;
-  levelUpChoices: string[];
-  fps: number;
-  errors: number;
-  /** The settings the shell runs under, and the live key map, for a scenario to read back. */
-  settings: SettingsSnapshot;
-}
-
-/** `window.__forgeDebug`, for scenarios and tests that need to set a scene up. */
-export interface ForgeDebug {
-  setSeed(seed: number): void;
-  spawn(type: number, n: number): number;
-  grantXp(n: number): void;
-  giveWeapon(id: string): boolean;
-  /**
-   * Start a bench window at horde size `n` (`?bench=N` gets here straight off the URL).
-   *
-   * It restarts the run on the chosen floor rather than arming on top of whatever screen the page
-   * is on: a bench measures a fight, so it needs a playing scene and a floor under it. Returns the
-   * number of bodies on the floor when the window armed — less than `n` only when the pool said
-   * no, which is the load being short and worth seeing.
-   */
-  bench(n: number, options?: BenchOptions): number;
-}
-
-export interface App {
-  readonly scene: SceneId;
-  readonly world: World;
-  /** Advance one browser frame: drain the accumulator, draw, sync the overlay. */
-  advance(nowMs: number): void;
-  command(cmd: HudCommand): void;
-  pick(index: number): void;
-  state(): ForgeState;
-  readonly debug: ForgeDebug;
-  /** Count a caught error; surfaces through `state().errors`. */
-  noteError(): void;
-
-  /**
-   * The bench window this page is running, or null if it is playing a campaign.
-   *
-   * `main.ts` reads it to publish `window.__benchResults` once the window is spent: the rig keeps
-   * its own clock and its own samples, so nothing here has to know what a finished report looks
-   * like, and the page's only job is to hand the numbers to something that can print them.
-   */
-  readonly bench: BenchRig | null;
-
-  /** The live settings, as they came off disk. The Settings tab reads and writes through this. */
-  readonly settings: Settings;
-  /** Change one and store the file, so it is still there after a reload. */
-  setSetting<K extends keyof Settings>(key: K, value: Settings[K]): void;
-  /** The live key map — the same table the sampler reads, not a copy of it. */
-  readonly bindings: BindTable;
-  /** Put `source` on `action`, swapping out whatever already had it. */
-  rebind(action: BindAction, source: string): void;
-  /** Back to the shipped map. */
-  resetBindings(): void;
-
-  /**
-   * Whether a resumable run is on the shelf.
-   *
-   * Answered from a flag rather than a `getItem`: the title and pause panels ask every frame,
-   * and a read of the file sixty times a second is not a check, it is a stall.
-   */
-  readonly hasSave: boolean;
-  /** Unlocks, best times and history, as read at boot and updated when a chapter or run ends. */
-  readonly meta: Meta;
-  /** Start chapter `index`, from the chapter grid or a restart at the current floor. */
-  choose(index: number): void;
-}
-
-export interface AppPorts {
-  view: View | null;
-  hud: Hud | null;
-  seed: number;
-  /** Passed in so the state can report it without the shell importing the engine. */
-  backend: 'webgpu' | 'webgl2' | 'none';
-  /**
-   * Where a run outlives the page: `window.localStorage` in the browser, a `Map` in a
-   * headless test, `null` where there is no storage at all (a browser with it turned off,
-   * a Node run). `persistence.ts` owns what is written under which key; the shell only
-   * decides *when*, and it does that through this port so nothing here reaches for a
-   * `window` that may not exist.
-   */
-  storage?: StorageLike | null;
-  /**
-   * The player's settings, decoded off disk by the shell.
-   *
-   * They come in through a port rather than being read here because `src/game` must not reach
-   * for `window.localStorage` (ARCHITECTURE.md: the sim runs headless in Node), and because a
-   * headless run then runs on `defaultSettings()` without a fake to invent.
-   */
-  settings?: Settings;
-  /** Unlocks, best times and history, read at boot. A run's end updates the copy. */
-  meta?: Meta;
-  /**
-   * Where the gamepads come from. Left out, the sampler polls the real `navigator.getGamepads`
-   * through `input/gamepad.ts`; a headless test hands over a list of sticks and buttons and plays
-   * the game with a controller that does not exist. It is a port for the same reason the storage
-   * is one: `src/game` does not reach for `window`, so the scene machine runs in plain Node.
-   */
-  pads?: PadSource;
-  /**
-   * The soundtrack, built by the shell and driven from here.
-   *
-   * Audio comes in through a port for the same reason the gamepads do: `src/game` does not touch
-   * `window` or an `AudioContext`, so the scene machine still runs in plain Node. Left out, the
-   * game plays silent — which is a degraded run rather than a broken one, and why this is a port
-   * with a `null` rather than something the shell insists on.
-   *
-   * It is a *reader* of the frame, called after the sim has stepped however many ticks that frame
-   * was owed, so one call covers up to five ticks of events (ARCHITECTURE.md "Data flow": render
-   * and `audio.drain()` are the same phase of the frame). It gets the live `World`, the scene the
-   * frame ended on — that is how the music ducks on the cards and the summary — the frame's real
-   * elapsed time, and the player's four volume knobs.
-   */
-  audio?: AudioEngine | null;
-  /**
-   * A millisecond clock, for the bench rig.
-   *
-   * It comes in as a port for the same reason the storage does: `src/game` does not reach for a
-   * wall clock, so a headless test can drive a whole bench window with a counter and get exact
-   * frame times out of it. Left out, a rig falls back to `Date.now`, which is fine to run and too
-   * coarse to trust.
-   */
-  now?: () => number;
-}
-
 /** Rolling window for the fps estimate; below this it reports 0 ("still warming up"). */
 const FPS_SAMPLES = 30;
-
-/**
- * What one run owes the storage, and how much of it it has already paid.
- *
- * It is created with the run rather than with the app, because both halves of it are
- * facts about *this* run: the autosave clock's next due time counts play seconds from
- * this run's start, and "has this chapter's ending been written" only means something
- * while the chapter is part of an unfinished run. A restart that kept the old archive
- * would hand a fresh run a spent clock (ARCHITECTURE.md "The autosave clock counts play
- * seconds"), which is the one way this file can be misused, so it is written down here.
- */
-interface RunArchive {
-  /** When the run is due to be written out: every 30 s of play, and at a chapter's end. */
-  autosave: AutosaveTimer;
-  /** The chapter whose clearing has been written to the meta; -1 while none has. */
-  clearedChapter: number;
-  /** The finished run's own history row has been written, so a run is counted once. */
-  ended: boolean;
-}
-
-function createArchive(): RunArchive {
-  return { autosave: createAutosaveTimer(), clearedChapter: -1, ended: false };
-}
 
 const NOOP = (): void => {};
 
@@ -347,10 +79,6 @@ const NOOP = (): void => {};
  * way it entered.
  */
 const PANEL_SCENES = new Set<SceneId>(['levelselect', 'settings', 'history']);
-
-function clamp(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v;
-}
 
 /**
  * A fixed-step clock plus the state machine around it.
@@ -442,16 +170,29 @@ export function createApp(ports: AppPorts): App {
   const storage = ports.storage ?? null;
 
   /**
-   * Whether there is a run to come back to, read once and kept up to date by every write.
+   * The shelf, read live so `keepShelf` never needs a second argument to say what scene this is.
    *
-   * The title's Continue button and the pause menu's Load ask every frame they are on screen.
-   * Answering from the file would mean a `getItem` and a JSON parse sixty times a second to
-   * learn that nothing has changed; this flag changes only where the run's own writes land.
+   * The flag it carries (`archive.onShelf`) is answered from the file once and then kept current
+   * by every write: the title's Continue button and the pause menu's Load ask every frame they
+   * are on screen, and a `getItem` plus a JSON parse sixty times a second is not a check, it is
+   * a stall.
    */
-  let saveOnShelf = storage === null ? false : hasSave(storage, problems);
+  const shelf: Shelf = {
+    storage,
+    problems,
+    get benched() {
+      return rig !== null;
+    },
+    get idle() {
+      return scene === 'menu';
+    },
+    wroteMeta(next) {
+      meta = next;
+    },
+  };
 
   /** The storage debt of whichever run `world` is, rebuilt with it. */
-  let archive = createArchive();
+  let archive = createArchive(storage === null ? false : hasSave(storage, problems));
 
   // One persistent step callback, so the accumulator loop allocates nothing per
   // frame. It reads `world` and `frame` through this closure, so a restart (which
@@ -475,7 +216,9 @@ export function createApp(ports: AppPorts): App {
   function restartRun(chapter: number): void {
     world = createWorld(ports.seed);
     world.autoFire = settings.autoFire;
-    archive = createArchive();
+    // A new clock and a new chapter tally, but the shelf carries over: restarting the run
+    // does not un-write the file that is still sitting there.
+    archive = createArchive(archive.onShelf);
     startChapter(world, chapter);
     scene = 'playing';
   }
@@ -490,7 +233,8 @@ export function createApp(ports: AppPorts): App {
   function enterWorld(w: World): void {
     world = w;
     world.autoFire = settings.autoFire;
-    archive = createArchive();
+    // The file it came out of is still on the shelf, so Load stays offered.
+    archive = createArchive(true);
     scene = w.over
       ? 'summary'
       : w.victory
@@ -523,87 +267,6 @@ export function createApp(ports: AppPorts): App {
   }
 
   /**
-   * Store the settings. One call, so a dial click and a keybind change cannot disagree about
-   * whether the file got written; a storage that refuses is counted and the change still applies
-   * for this run.
-   */
-  function storeSettings(): void {
-    if (storage === null) return;
-    saveSettings(storage, settings, problems);
-  }
-
-  /** Add this run to the machine's history, and open what it earned. */
-  function writeMeta(w: World): void {
-    if (storage === null) return;
-    // One read, one write: the file is the history, so a run's row goes onto whatever is
-    // already there rather than replacing it, and `recordRunEnd` does the unlocking. The
-    // in-memory copy follows the file, so a chapter grid opened after this offers what was
-    // earned rather than what was on disk when the page loaded.
-    const next = recordRunEnd(loadMeta(storage, problems), w, new Date().toISOString());
-    saveMeta(storage, next, problems);
-    meta = next;
-  }
-
-  /**
-   * Write the run out now, because the player asked.
-   *
-   * The clock starts again from here: a hand-written save of the same state the autosave
-   * was due for would otherwise spend its next write, a frame later, on nothing new.
-   */
-  function writeSave(): void {
-    if (storage === null) return;
-    if (saveRun(storage, world, problems)) saveOnShelf = true;
-    markAutosaved(archive.autosave, world);
-  }
-
-  /**
-   * Keep the storage in step with the run: the autosave clock, and the meta write when a
-   * chapter or the run ends.
-   *
-   * Four rules hold it together, and all four exist because a save that lands at the wrong
-   * moment is worse than one that does not land:
-   *
-   * - A chapter's end is recorded, keyed by *which* chapter, and it is recorded before the
-   *   autosave writes, because that write is the one that lets the next floor be resumed.
-   * - A finished run writes its history row and then loses its slot. A dead or won run is
-   *   not a run to come back to, and `persistence.ts` is explicit that a save of one is a
-   *   Continue button into a game you already finished.
-   * - A failed write is counted and the interval restarts anyway. Retrying a storage that
-   *   refused (quota, private mode) every frame would spend the run's whole error budget on
-   *   one bad write.
-   * - A bench page writes nothing, before its window ends or after. Its World is a rig rather than
-   *   a run: a thousand seeded bodies cost megabytes of storage, would blow the quota, and would
-   *   then hand the next player a Continue into a test bench. The window ending does not turn the
-   *   page back into a session — the floor stays full of seeded bodies — so the rule is about the
-   *   rig, not about whether it is still timing. Earning a chapter from a bench is the same
-   *   category of untruth, so the meta write waits for a run that was played.
-   */
-  function archiveRun(): void {
-    if (storage === null || scene === 'menu') return;
-    if (rig !== null) return;
-    const w = world;
-
-    if (w.over || w.victory) {
-      if (archive.ended) return;
-      archive.ended = true;
-      writeMeta(w);
-      clearSave(storage, problems);
-      saveOnShelf = false;
-      return;
-    }
-
-    if (w.chapterComplete && w.chapter !== archive.clearedChapter) {
-      archive.clearedChapter = w.chapter;
-      writeMeta(w);
-    }
-
-    if (autosaveDue(archive.autosave, w)) {
-      if (saveRun(storage, w, problems)) saveOnShelf = true;
-      markAutosaved(archive.autosave, w);
-    }
-  }
-
-  /**
    * Turn one frame's scene-level keys into a scene change.
    *
    * Done before the sim runs so a pause pressed on the frame a level-up opens lands
@@ -632,137 +295,48 @@ export function createApp(ports: AppPorts): App {
     }
   }
 
-  function nearestEnemies(w: World): ForgeState['enemies']['nearest'] {
-    const pool = w.enemies;
-    const px = w.player.x;
-    const py = w.player.y;
-    // A ten-wide insertion list over one scan of the live slots: cheap enough to
-    // call from a scenario, and it reads only the pools, so the state stays a
-    // snapshot rather than a second game.
-    const picks: Array<{ d2: number; i: number }> = [];
-    for (let i = 0; i < pool.cap; i++) {
-      if (pool.alive[i] === 0 || pool.hp[i] <= 0) continue;
-      const dx = pool.x[i] - px;
-      const dy = pool.y[i] - py;
-      const d2 = dx * dx + dy * dy;
-      if (picks.length < 10) {
-        picks.push({ d2, i });
-        if (picks.length === 10) picks.sort((a, b) => a.d2 - b.d2);
-      } else if (d2 < picks[9].d2) {
-        picks[9] = { d2, i };
-        picks.sort((a, b) => a.d2 - b.d2);
-      }
-    }
+  /**
+   * The shell read live, for `buildState` (see `appState.ts`).
+   *
+   * One object allocated with the app rather than a literal built per call: `state()` is a
+   * check seam that a scenario may poll, and the alternative is a fresh argument object on every
+   * read. The getters are what keep it honest — a scenario that pauses and then asks for the
+   * state gets the scene it paused on, not the one that was current when this was written.
+   */
+  const stateHost: StateHost = {
+    get world() {
+      return world;
+    },
+    get scene() {
+      return scene;
+    },
+    backend: ports.backend,
+    get mode() {
+      return rig === null ? 'campaign' : 'bench';
+    },
+    get errors() {
+      return errorCount;
+    },
+    get settings() {
+      return settings;
+    },
+    get bindings() {
+      return binds;
+    },
+    frameTimes,
+  };
 
-    const out: ForgeState['enemies']['nearest'] = [];
-    for (const pick of picks) {
-      const i = pick.i;
-      out.push({ type: ENEMIES[pool.kind[i]].id, x: pool.x[i], y: pool.y[i], hp: pool.hp[i] });
-    }
-    return out;
-  }
-
-  function measureFps(): number {
-    let sum = 0;
-    let n = 0;
-    for (let i = 0; i < FPS_SAMPLES; i++) {
-      const dt = frameTimes[i];
-      if (dt > 0) {
-        sum += dt;
-        n++;
-      }
-    }
-    if (n < FPS_SAMPLES) return 0;
-    return Math.round(n / sum);
-  }
-
-  function buildState(): ForgeState {
-    const w = world;
-    const p = w.player;
-
-    const byType: Record<string, number> = {};
-    for (let i = 0; i < ENEMIES.length; i++) byType[ENEMIES[i].id] = 0;
-    const enemies = w.enemies;
-    // One pass over the live slots, so a scenario can count a horde by archetype
-    // without walking the pools. Every id key is always present — 0 means "not on
-    // screen", which is what lets a scenario assert on a type it expects to see.
-    for (let i = 0; i < enemies.cap; i++) {
-      if (enemies.alive[i] === 0 || enemies.hp[i] <= 0) continue;
-      byType[ENEMIES[enemies.kind[i]].id]++;
-    }
-    const nearest = nearestEnemies(w);
-
-    const weapons: ForgeWeapon[] = [];
-    for (const hand of w.slots) {
-      if (hand.weapon < 0) continue;
-      const def = WEAPONS[hand.weapon];
-      // Both gauges as they stand rather than as fractions: which of the three things a
-      // hand spends — magazine, heat or charge — is the def's business, and a scenario
-      // that wants a percentage has the ceiling to divide by in the same def.
-      weapons.push({
-        id: def.id,
-        family: def.family,
-        ammo: hand.ammo,
-        heat: hand.heat,
-        energy: hand.energy,
-        venting: hand.venting,
-        reloading: hand.reload > 0,
-      });
-    }
-
-    const powerups: Array<{ id: string; tier: number }> = [];
-    for (let i = 0; i < POWERUPS.length; i++) {
-      const tier = w.powerTiers[i];
-      if (tier > 0) powerups.push({ id: POWERUPS[i].id, tier });
-    }
-
-    const levelUpChoices: string[] = [];
-    for (let i = 0; i < w.levelUpChoices.length; i++) {
-      const id = w.levelUpChoices[i];
-      if (id >= 0 && id < POWERUPS.length) levelUpChoices.push(POWERUPS[id].id);
-    }
-
-    const active = w.slots[w.activeSlot];
-    const activeWeapon = active && active.weapon >= 0 ? WEAPONS[active.weapon].id : '';
-
-    return {
-      scene,
-      backend: ports.backend,
-      tick: w.tick,
-      chapter: w.chapter,
-      // A bench window is a mode rather than a scene: the scene is still `playing`, and what a
-      // scenario needs to be able to tell is that this page is measuring rather than being played.
-      mode: rig !== null ? 'bench' : 'campaign',
-      player: {
-        x: p.x,
-        y: p.y,
-        hp: p.hp,
-        maxHp: p.maxHp,
-        shield: p.shield,
-        level: p.level,
-        xp: p.xp,
-        dashReady: p.dashCd <= 0,
-        alive: p.alive,
-      },
-      // The same read the chapter machine waits on, so the number a scenario asserts on
-      // and the number that ends the chapter cannot drift apart: `bossesAlive` is the flag
-      // the arc itself was written from this tick.
-      wave: { index: w.wave.index, timeLeft: w.wave.timeLeft, bossAlive: bossesAlive(w) },
-      boss: { alive: w.boss.alive, name: w.boss.name, hp: w.boss.hp, maxHp: w.boss.maxHp },
-      chapterComplete: w.chapterComplete,
-      victory: w.victory,
-      score: w.score,
-      kills: w.kills,
-      enemies: { count: enemies.count, byType, nearest },
-      weapons,
-      activeWeapon,
-      powerups,
-      levelUpChoices,
-      fps: measureFps(),
-      errors: errorCount + w.errors,
-      settings: snapshotSettings(settings, binds),
-    };
-  }
+  /** The debug hooks; see `appDebug.ts` for why they read the world through a host. */
+  const debug = createDebug({
+    world: () => world,
+    frame,
+    restart: restartRun,
+    arm(armed) {
+      rig = armed;
+    },
+    backend: ports.backend,
+    now: ports.now,
+  });
 
   const app: App = {
     get scene() {
@@ -811,7 +385,7 @@ export function createApp(ports: AppPorts): App {
         if (scene === 'levelup') handleLevelUp();
       }
 
-      archiveRun();
+      keepShelf(shelf, archive, world);
 
       if (view) view.draw(world, alpha, report.dt, scene === 'menu');
 
@@ -860,7 +434,7 @@ export function createApp(ports: AppPorts): App {
         case 'save':
           // Only ever from a frozen scene in the game, which is the point of the button:
           // what gets written is the state the player stopped on.
-          if (scene === 'playing' || scene === 'paused') writeSave();
+          if (scene === 'playing' || scene === 'paused') writeSave(shelf, archive, world);
           break;
         case 'load': {
           // The title's Continue and the pause menu's Load are the same act: stop this run
@@ -870,10 +444,9 @@ export function createApp(ports: AppPorts): App {
           // the game is standing still.
           if (scene !== 'menu' && scene !== 'paused' && !PANEL_SCENES.has(scene)) break;
           const saved = storage === null ? null : loadRun(storage, problems);
-          if (saved !== null) {
-            enterWorld(saved);
-            saveOnShelf = true;
-          }
+          // `enterWorld` is what puts the file back on the shelf, so a Load of the run you are
+          // already holding does not look like a way to lose it.
+          if (saved !== null) enterWorld(saved);
           break;
         }
         case 'levelselect':
@@ -900,7 +473,7 @@ export function createApp(ports: AppPorts): App {
       if (!world.pendingLevelUp) scene = 'playing';
     },
 
-    state: () => buildState(),
+    state: () => buildState(stateHost),
 
     get bench() {
       return rig;
@@ -919,7 +492,7 @@ export function createApp(ports: AppPorts): App {
       // writes the file whole, so what the panels show and what a reload will read are the same
       // thing. `autoFire` is the one entry a live world has to be told about.
       settings = { ...settings, [key]: value } as Settings;
-      storeSettings();
+      storeSettings(shelf, settings);
       if (key === 'autoFire') world.autoFire = settings.autoFire;
     },
 
@@ -929,18 +502,18 @@ export function createApp(ports: AppPorts): App {
 
     rebind(action, source) {
       settings = { ...settings, binds: swapBinds(settings.binds, action, source) };
-      storeSettings();
+      storeSettings(shelf, settings);
       applyBinds();
     },
 
     resetBindings() {
       settings = { ...settings, binds: {} };
-      storeSettings();
+      storeSettings(shelf, settings);
       applyBinds();
     },
 
     get hasSave() {
-      return saveOnShelf;
+      return archive.onShelf;
     },
 
     get meta() {
@@ -954,75 +527,7 @@ export function createApp(ports: AppPorts): App {
       restartRun(index);
     },
 
-    debug: {
-      setSeed(seed) {
-        world.rng = createRng(seed);
-      },
-
-      // Put `n` bodies of archetype `type` on a ring around the player, close enough
-      // that auto-fire engages, for a scenario or the bench to shoot at.
-      spawn(type, n) {
-        const kind = type >= 0 && type < ENEMIES.length ? type : 0;
-        const def = ENEMIES[kind];
-        let made = 0;
-        for (let i = 0; i < n; i++) {
-          const a = (i / n) * Math.PI * 2 + next(world.rng) * 0.5;
-          const r = 8 + next(world.rng) * 6;
-          const x = clamp(world.player.x + Math.cos(a) * r, world.minX + def.radius, world.maxX - def.radius);
-          const y = clamp(world.player.y + Math.sin(a) * r, world.minY + def.radius, world.maxY - def.radius);
-          if (spawnEnemy(world, kind, x, y) >= 0) made++;
-        }
-        return made;
-      },
-
-      grantXp(n) {
-        awardXp(world, n);
-      },
-
-      giveWeapon(id) {
-        const index = WEAPONS.findIndex((w) => w.id === id);
-        if (index < 0) return false;
-        // Fill the empty hand if there is one, else the active hand, and make a hand
-        // that was empty the one in play, so a granted weapon is the one being fired.
-        let slot = world.slots.findIndex((s) => s.weapon < 0);
-        let switched = false;
-        if (slot < 0) slot = world.activeSlot;
-        else switched = true;
-        const hand = world.slots[slot];
-        // One call owns "this hand now holds that gun", including what the gun starts
-        // its magazine, its heat and its charge with — a granted weapon that arrived
-        // half empty would read as a broken grant, not as a spent one.
-        loadSlot(hand, index);
-        if (switched) world.activeSlot = slot;
-        return true;
-      },
-
-      /**
-       * Arm a bench window at horde size `n`.
-       *
-       * It starts a run rather than arming over the screen it was called from: a window measures a
-       * fight, so it needs a playing scene and a floor under it — cover and hazards are part of the
-       * load, not scenery (a horde on open floor is a fight no chapter actually has). The chapter
-       * defaults to the floor the page is on, so a mid-run `bench(300)` benches where the player
-       * actually is.
-       */
-      bench(n, options) {
-        const horde = Math.max(1, Math.floor(n));
-        const asked = options?.chapter;
-        const chapter = clamp(
-          Math.floor(Number.isFinite(asked) ? (asked as number) : world.chapter),
-          0,
-          LEVELS.length - 1,
-        );
-        restartRun(chapter);
-        rig = createBenchRig({ ...options, enemies: horde, chapter, backend: ports.backend, now: ports.now });
-        // Prime it before the first frame. The fill is setup rather than measurement — and the
-        // expensive frame of a bench is the one that puts a thousand bodies down, so a window whose
-        // first sampled frame started from an empty arena would be timing the wrong thing twice.
-        rig.hold(world, frame);
-        return world.enemies.count;
-      },
-    },
+    debug,
   };
 
   /** Feed the overlay; the world and scene are read live through these getters. */
@@ -1039,10 +544,10 @@ export function createApp(ports: AppPorts): App {
     command(cmd) {
       app.command(cmd);
     },
-    // Answered off the flag the writes keep current (see `saveOnShelf`), so a panel that asks
+    // Answered off the flag the writes keep current (see `shelf`), so a panel that asks
     // every frame pays for a boolean rather than a file read and a JSON parse.
     hasSave() {
-      return saveOnShelf;
+      return archive.onShelf;
     },
     choose(index) {
       app.choose(index);

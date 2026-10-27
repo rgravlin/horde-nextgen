@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 
-import type { App, ForgeState } from '../../src/game/app';
+import type { App, ForgeState } from '../../src/game/appTypes';
 import type { BenchResult } from '../../src/game/bench';
 
 /**

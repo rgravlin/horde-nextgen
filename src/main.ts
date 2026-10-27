@@ -21,7 +21,8 @@ import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
 
 import { createEngine, type AudioEngine, type AudioGraph } from './audio/synth';
-import { createApp, snapshotSettings, type App, type ForgeState } from './game/app';
+import { createApp } from './game/app';
+import { snapshotSettings, type App, type ForgeState } from './game/appTypes';
 import type { BenchResult } from './game/bench';
 import { defaultSettings, loadMeta, loadSettings, type Settings, type StorageLike } from './game/persistence';
 import { buildBinds } from './input/bindings';

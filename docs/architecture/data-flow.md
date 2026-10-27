@@ -116,19 +116,25 @@ The points below are load-bearing rather than incidental, so they are recorded h
   interval still — a wall-clock timer would spend a long pause writing saves and call that autosave. It reports due
   every 30 s and at a chapter's end, keyed by *which* chapter ended, because the intermission is 4 s and the
   interval is 30: a chapter can end inside the gap its predecessor opened.
-- **The shell owns the shelf, not the keys.** `archiveRun()` in `app.ts` runs once per frame outside the step loop
-  and is the only thing that writes: a frozen scene writes nothing, so the interval is measured in play and the
-  pause screen's Save is a request rather than a second clock. `save`, `load` and the title's Continue arrive as
-  `HudCommand`s and go through `App.command`, exactly like `start` and `restart` — no key or click handler touches
-  the `World` — and a load swaps whole `World`s (`enterWorld`), because a save is a state, not a patch. Both
+- **The shell owns the shelf, not the keys.** `keepShelf()` in `appArchive.ts` runs once per frame outside the
+  step loop and is the only thing that writes: a frozen scene writes nothing, so the interval is measured in play
+  and the pause screen's Save is a request rather than a second clock. It is handed a `Shelf` (the storage port,
+  the problem sink, and live reads of "is this a bench page" and "is this the title") rather than closing over the
+  app, so the four timing rules are testable against a `Map` with no scene machine. `save`, `load` and the title's
+  Continue arrive as `HudCommand`s and go through `App.command`, exactly like `start` and `restart` — no key or
+  click handler touches the `World` — and a load swaps whole `World`s (`enterWorld`), because a save is a state,
+  not a patch. Both
   buttons ask `hasSave()` before they appear, and a load from storage is checked before it is played: an empty or
   corrupt slot leaves the title on the title and costs one `errors`.
 
 ## State for checks
 
-`window.__forgeState()` (`src/game/debugState.ts`) builds a fresh plain object each call from the `World` plus
-`renderer.backend` and an fps estimate — stable key set per TECH.md, ≤10 nearest enemies, no pool references
-leaked. `window.__forgeDebug` (`setSeed`, `spawn`, `grantXp`, `giveWeapon`, `bench`) routes through `step`-side
-APIs only, so scenario results stay reproducible. Caught errors increment `errors` instead of being swallowed.
+`window.__forgeState()` is `buildState` in `src/game/appState.ts`: a fresh plain object each call from the `World`
+plus the shell read through a `StateHost` (`scene`, `backend`, `mode`, `errors`, the frame-time ring) — stable key
+set per TECH.md, ≤10 nearest enemies, no pool references leaked. `window.__forgeDebug` (`setSeed`, `spawn`,
+`grantXp`, `giveWeapon`, `bench`) is `createDebug` in `src/game/appDebug.ts`, and it takes the live `World` from its
+host — a bench window arms a new run, so the bodies have to go into the world that restart made. Both route
+through `step`-side APIs only, so scenario results stay reproducible. Caught errors increment `errors` instead of
+being swallowed.
 No URL parameter or key jumps to a state purely so it can be photographed; scenarios play their way there.
 

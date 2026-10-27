@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createApp, type App } from '../../src/game/app';
+import { createApp } from '../../src/game/app';
+import type { App } from '../../src/game/appTypes';
 import { WEAPONS } from '../../src/content/weapons';
 import {
   META_KEY,
@@ -396,5 +397,92 @@ describe('the end of a run', () => {
     clock.play(400);
     expect(app.world.chapter).toBe(1);
     expect(app.state().errors).toBe(0);
+  });
+});
+
+/**
+ * `App.hasSave` — the flag the title's Continue and the pause menu's Load are built on.
+ *
+ * The block above reads the *file*; this one reads the shell's answer about the file, which is
+ * what the menus actually ask and what a save feature gets wrong in four ways at once: a run
+ * that outlived the page is not offered back, a restart hides a file that is still there, a
+ * finished run keeps offering itself, and a load looks like a way to lose the only save. Each
+ * `it` below is one of those, and each fails if the flag stops tracking the shelf.
+ */
+describe('the shelf flag the menus read', () => {
+  it('comes off the file at boot, not off this run\'s writes', () => {
+    const shelf = memory();
+    expect(saveRun(shelf, playedRun(600, 0)), 'the fixture puts a run on the shelf').toBe(true);
+    shelf.writes.length = 0;
+
+    const app = appOver(shelf);
+
+    // Before a single frame: Continue is offered because a file is there. This is the whole of
+    // save/resume across a reload — a new app on a new World has to read the run back.
+    expect(app.hasSave).toBe(true);
+    expect(shelf.writes, 'reading the shelf is not a write').toEqual([]);
+
+    expect(
+      appOver(memory()).hasSave,
+      'an empty shelf starts with no Continue',
+    ).toBe(false);
+  });
+
+  it('goes up when a write lands, and stays up across a restart', () => {
+    const store = memory();
+    const app = appOver(store);
+    const clock = createDriver(app);
+    app.command('start');
+
+    clock.play(170);
+    expect(app.hasSave, 'no interval has fallen due yet').toBe(false);
+
+    clock.play(230);
+    expect(app.hasSave, 'the run is on the shelf now').toBe(true);
+
+    // Restart starts a new run; it does not un-write the file that is still sitting there, and
+    // the pause menu keeps offering Load while it is.
+    app.command('restart');
+    expect(app.hasSave).toBe(true);
+    expect(hasSave(store)).toBe(true);
+  });
+
+  it('goes down with a finished run, and stays down while the summary is left up', () => {
+    const store = memory();
+    const app = appOver(store);
+    const clock = createDriver(app);
+    app.command('start');
+
+    // Past an interval first, so there is a flag to take away.
+    clock.play(400);
+    expect(app.hasSave).toBe(true);
+
+    expect(clock.untilDead()).toBe(true);
+    expect(app.scene).toBe('summary');
+    expect(app.hasSave, 'a run you already finished is not a run to come back to').toBe(false);
+    expect(hasSave(store), 'and the file went with it').toBe(false);
+
+    clock.play(60, false);
+    expect(app.hasSave).toBe(false);
+    expect(app.state().errors).toBe(0);
+  });
+
+  it('stays up when the pause screen takes the run back out of the file', () => {
+    const store = memory();
+    const app = appOver(store);
+    const clock = createDriver(app);
+    app.command('start');
+    clock.play(400);
+    expect(app.hasSave).toBe(true);
+
+    app.command('pause');
+    app.command('load');
+    expect(app.scene).toBe('playing');
+    expect(app.hasSave, 'loading a run does not look like a way to lose it').toBe(true);
+
+    app.command('pause');
+    expect(app.hasSave, 'Load is still offered, which is how you go back a second time').toBe(
+      true,
+    );
   });
 });
