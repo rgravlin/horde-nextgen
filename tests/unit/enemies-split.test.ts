@@ -225,35 +225,36 @@ describe('the frozen hordes', () => {
    * than a spot check.
    *
    * The three that enumerate the table were re-taken when the sniper and the orbiter joined
-   * it, because those fixtures put one body down per row and so count the rows. That is not
-   * the tolerance moving: the same three fixtures run over the thirteen rows that were here
-   * first still come back 3788084140, 3523466313 and 3868142811 — the numbers this file
-   * carried before — which is the check the header asks for and the reason the new numbers
-   * below can be trusted to be new content rather than a moved rule.
+   * it, and re-taken again now that the teleporter, the spawner and the spawnling have, for
+   * the same reason: those fixtures put one body down per row, so a row is a change of number
+   * rather than a change of rule. Before this chapter of the roster the table held fifteen
+   * rows and the three fixtures came back 1893471010, 4000957165 and 3895324722; the two new
+   * behaviours sit behind a dispatch key nothing else reads, so a failure *now* still means a
+   * rule moved, and the way to tell is to run the fixture with the new rows left out.
    */
   const FROZEN = {
     /** Every archetype, nothing shooting: 900 ticks of pure behaviour. */
-    quiet: 1893471010,
+    quiet: 2958803361,
     /** The same table under fire, so the kills and their blasts are covered too. */
-    fought: 4000957165,
+    fought: 461075619,
     /** The table with a stasis field up, which is where the travel fraction is read. */
-    slowed: 3895324722,
+    slowed: 2405504754,
     /** A hug against a Hot Plate: thorns, armour, and a burst spent in a crowd. */
     plated: 1410876146,
     /** Chapter four, 1,500 ticks: wave recipes, cover, hazards and an encounter. */
     chapter: 1874982060,
   };
 
-  it('is the same quiet horde: fifteen bodies, nobody shooting, nine hundred ticks', () => {
+  it('is the same quiet horde: eighteen bodies, nobody shooting, nine hundred ticks', () => {
     const w = createWorld(0x51de, { arenaHalf: 40 });
     wholeTable(w);
     const h = play(w, 900);
 
-    // Readable first, exact second. The count is past the fifteen that walked in because a
-    // splitter came apart into three splinters and the broodmother kept loosing broods into a
-    // room nothing was clearing — the two behaviours that make the crowd bigger than the pack
-    // recipe, which is exactly the thing a silent change would break.
-    expect(countAlive(w.enemies)).toBe(24);
+    // Readable first, exact second. The count is past the eighteen that walked in because a
+    // splitter came apart into three splinters and the broodmother and the spawner kept
+    // putting young into a room nothing was clearing — the behaviours that make the crowd
+    // bigger than the pack recipe, which is exactly the thing a silent change would break.
+    expect(countAlive(w.enemies)).toBe(33);
     expect(h).toBe(FROZEN.quiet);
   });
 
@@ -262,11 +263,10 @@ describe('the frozen hordes', () => {
     wholeTable(w);
     const h = play(w, 900, true, true);
 
-    // Eight left of the fifteen and whatever the crowd grew by, with both kinds of enemy
-    // round in the air and the blast stack spent more than once. This is the fixture that
-    // covers the kill path, because a death is where a shard, a burst and a brood all get
-    // queued at once.
-    expect(countAlive(w.enemies)).toBe(8);
+    // Ten left of the eighteen and whatever the crowd grew by, with both kinds of enemy round
+    // in the air and the blast stack spent more than once. This is the fixture that covers the
+    // kill path, because a death is where a shard, a burst and a brood all get queued at once.
+    expect(countAlive(w.enemies)).toBe(9);
     expect(h).toBe(FROZEN.fought);
   });
 

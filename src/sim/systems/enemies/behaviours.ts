@@ -8,12 +8,20 @@
  * own file because what they do between shots is genuinely different: hold a band, plant and
  * lob, or escort and mend. The two marks share one file because they share one bargain: a line
  * is painted, held, then spent along it.
+ *
+ * The last two break the walking default instead of the shooting one. The teleporter spends a
+ * line the way the marks do but crosses it in a tick rather than along it (`phaser.ts`), and
+ * the spawner never aims at the player at all — everything it does arrives as another body
+ * (`nursery.ts`). Each needed its own file because neither is a variation on a number: one
+ * moves without travelling, the other damages without touching.
  */
 
 import { type AiId } from '../../../content/enemies';
 import { type World } from '../../world';
 import { slamRunner, broodRunner, matronRunner } from './bosses';
 import { sniperRunner, orbiterRunner } from './marksmen';
+import { spawnerRunner } from './nursery';
+import { teleporterRunner } from './phaser';
 import { chargeRunner, fuseRunner } from './rushers';
 import { seekChaser, swaySeek } from './seekers';
 import { standoffOrbit, standoffShoot, lobRunner } from './standoff';
@@ -37,6 +45,10 @@ export const AI: Record<AiId, AiFn> = {
   // afterwards, which is what makes *moving* the answer to both.
   sniper: sniperRunner,
   orbiter: orbiterRunner,
+  // The two that break the walking default: a body that crosses its painted line in one tick
+  // and a body whose damage is other bodies.
+  teleporter: teleporterRunner,
+  spawner: spawnerRunner,
   // The three end-of-level encounters, beside the trash they turn up rather than apart from
   // it: the same `AiFn` shape, the same pooled `phase` and `timer`, no boss class of their own.
   brute: slamRunner,

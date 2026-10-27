@@ -43,14 +43,22 @@ import { DT, Ev, TUNE, clearEvents, createWorld, type World } from '../../src/si
 /**
  * Archetypes that arrive as somebody's offspring rather than as a pack.
  *
- * A splitter's splinters and a broodmother's brood come out of the body that already stands on
- * the floor, which is what makes them read: four splinters appear *around* the splitter that
- * just died, wherever it died. The view-rect rule is about arrivals, so they are excluded from
- * that half of the check — and only from that half: the cover rule below still counts them, and
+ * A splitter's splinters, a broodmother's brood and a spawner's young come out of the body
+ * that already stands on the floor, which is what makes them read: four splinters appear
+ * *around* the splitter that just died, wherever it died, and a spawner's brood lands behind
+ * it while it walks. The view-rect rule is about arrivals, so they are excluded from that
+ * half of the check — and only from that half: the cover rule below still counts them, and
  * passes, because a child put down inside a wall is the same unreadable arrival.
+ *
+ * The exemption keys off *how a body arrives*, not off which numbers it carries, which is why
+ * the spawner's young are their own archetype: they would otherwise be exempted by being
+ * swarmlings, and a swarmling also arrives from the wave recipes, where the rule has to hold.
  */
 const OFFSPRING = new Set(
-  ENEMIES.filter((d) => d.splits !== undefined).map((d) => d.splits!.def),
+  ENEMIES.filter((d) => d.splits !== undefined || d.brood !== undefined).flatMap((d) => [
+    d.splits?.def,
+    d.brood?.def,
+  ]),
 );
 
 /** One chapter, started the way the game starts one: its floor, its clock, its script. */

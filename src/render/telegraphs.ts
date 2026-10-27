@@ -221,8 +221,12 @@ export function createTelegraphView(scene: Object3D): TelegraphView {
         add(KIND_LASER, body, x, y, 18, def.params.windup ?? 0.4);
       } else {
         // Everything else is about to *move*: a strip along the way it is facing, as long as the
-        // dash it is winding up.
-        const reach = (def.params.dashSpeed ?? 0) * (def.params.dashTime ?? 0);
+        // dash it is winding up. A body that declares `dashReach` pays for the strip directly
+        // instead of as speed × time — the teleporter crosses its line in a jump plus a run, so
+        // there is no cruise to multiply, and the strip still says exactly what it means to
+        // spend.
+        const cruise = def.params.dashSpeed ?? 0;
+        const reach = cruise > 0 ? cruise * (def.params.dashTime ?? 0) : (def.params.dashReach ?? 0);
         if (reach > 0) add(KIND_LINE, body, x, y, reach, def.params.windup ?? 0.4);
       }
     }

@@ -26,6 +26,11 @@ export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
  * `sniper` and `orbiter` are the two marks: different ranges and different feet, one
  * bargain — a line is painted, held, then spent along it. They live in `enemiesA.ts` and
  * share `systems/enemies/marksmen.ts`.
+ *
+ * `teleporter` and `spawner` are the two that break the "walk at you" default: one crosses
+ * its approach in a tick instead of along it (`systems/enemies/phaser.ts`) and one does all
+ * its damage through bodies it adds rather than through itself
+ * (`systems/enemies/nursery.ts`). Both live in `enemiesA.ts` with the marks.
  */
 export const AI_IDS = [
   'chaser',
@@ -39,6 +44,8 @@ export const AI_IDS = [
   'healer',
   'sniper',
   'orbiter',
+  'teleporter',
+  'spawner',
   'brute',
   'brooder',
   'matron',
@@ -94,6 +101,15 @@ export interface EnemyDef {
   /** Death split, for the bodies that come apart into smaller ones. */
   readonly splits?: SplitDef;
   /**
+   * What it puts down while it is still standing, on its own beat.
+   *
+   * Kept apart from `splits` rather than shared with it because the two want different
+   * answers: a death split is one last trick, paid out once, and a body that emits while
+   * alive is a faucet the player is asked to shut, which is why the emitter's feet and its
+   * beat are both written to make it worth killing first. Read by `systems/enemies/nursery.ts`.
+   */
+  readonly brood?: SplitDef;
+  /**
    * An end-of-level encounter rather than horde fodder.
    *
    * Two things read it: a boss never staggers (a shove that moved a 500 HP body would
@@ -123,15 +139,21 @@ export interface EnemyDef {
  * shot at by something that stops, so something that shoots from a moving circle and
  * something that shoots from across the room both arrive as a twist on a known threat
  * rather than as two new things to learn at once.
+ *
+ * The two that break the walking default join at the same place, for the same reason read
+ * the other way: a teleporter is answered by the charger's lesson (step off the line it
+ * paints) and a spawner by the splitter's (kill it away from the crowd, and kill it before
+ * the crowd it makes arrives), so both want a player who has already met the body they
+ * twist. Where a row lists one of them it sits behind the pack's guns rather than in front.
  */
 export const PACKS: readonly (readonly string[])[] = [
   // Two bodies that walk at you, then the first thing that does not.
   ['chaser', 'swarmling', 'chaser', 'swarmling', 'charger'],
   ['swarmling', 'chaser', 'charger', 'exploder', 'chaser'],
   ['charger', 'swarmling', 'exploder', 'shooter', 'chaser', 'splitter'],
-  ['charger', 'exploder', 'armored', 'shooter', 'sniper', 'splitter', 'grenadier', 'orbiter'],
-  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'sniper', 'exploder', 'orbiter'],
-  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'sniper', 'charger', 'armored', 'shooter', 'grenadier', 'healer', 'orbiter'],
+  ['charger', 'exploder', 'armored', 'shooter', 'sniper', 'splitter', 'grenadier', 'orbiter', 'teleporter', 'spawner'],
+  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'sniper', 'teleporter', 'exploder', 'orbiter', 'spawner'],
+  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'sniper', 'teleporter', 'charger', 'armored', 'shooter', 'grenadier', 'healer', 'orbiter', 'spawner'],
 ];
 
 /** The only archetype the wave spawner falls back to if a recipe names nothing else. */
@@ -571,8 +593,8 @@ const ENEMIES_CORE: readonly EnemyDef[] = [
 ];
 
 /**
- * The table the sim and the renderer actually read: the thirteen rows above plus the two
- * marks, which are authored in `enemiesA.ts` beside the behaviour they share.
+ * The table the sim and the renderer actually read: the thirteen rows above plus the five
+ * that came after them, authored in `enemiesA.ts` beside the behaviour each one shares.
  *
  * One table on purpose. `ENEMY_BY_ID` below, the wave recipes, the bench's load and the
  * hit query's padding all walk this list, so an archetype that lived in a second table
