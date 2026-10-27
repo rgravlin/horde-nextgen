@@ -158,7 +158,7 @@ function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFram
   const want = wantsFire(w, frame, def);
 
   if (!want) {
-    if (charge && slot.charge > 0) fire(w, slot, def, false);
+    if (charge && slot.charge > 0) fire(w, slot, def, false, frame.aimDist);
     slot.beam = 0;
     return;
   }
@@ -168,22 +168,23 @@ function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFram
       slot.charge += DT;
       return;
     }
-    fire(w, slot, def, !frame.fire);
+    fire(w, slot, def, !frame.fire, frame.aimDist);
     return;
   }
 
-  fire(w, slot, def, !frame.fire);
+  fire(w, slot, def, !frame.fire, frame.aimDist);
 }
 
 /**
  * Fire one round, or one volley, from `slot` if the gun is able to.
  *
  * `auto` marks the trigger as auto-fire rather than a held button, and the two aim
- * differently on purpose: a held trigger fires exactly where the mouse steered,
- * while auto-fire leads the nearest body. Auto-fire exists so the gun keeps working
- * while the player is busy moving, and a round fired along whatever the aim happened
- * to be last almost never finds the crowd closing in from every side, which would
- * leave the setting looking broken.
+ * differently on purpose: a held trigger fires where the player steered — the line, and
+ * for the two kinds that resolve at a landing point the distance too — while auto-fire
+ * leads the nearest body. Auto-fire exists so the gun keeps working while the player is
+ * busy moving, and a round fired along whatever the aim happened to be last almost never
+ * finds the crowd closing in from every side, which would leave the setting looking
+ * broken.
  *
  * Leading matters most for a lobbed shell, which is why the `arc` branch does not
  * merely point at the nearest body — see the comment there. A singularity is pointed
@@ -199,7 +200,7 @@ function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFram
  * *not* led, because it pops where it got to rather than where it was aimed, and its
  * job is to gather the crowd that is about to be there.
  */
-function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean): void {
+function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean, aimDist: number): void {
   const cost = def.energy ? def.energy.perShot : 0;
   if (slot.reload > 0 || slot.cooldown > 0 || slot.venting) {
     slot.beam = 0;
@@ -267,6 +268,22 @@ function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean): void {
     } else {
       ax /= aimLen;
       ay /= aimLen;
+    }
+
+    // A steered lob lands at the steered point rather than at the top of its range.
+    //
+    // A cursor and a right stick both point at a *place*, and the place is the whole
+    // verb for the two kinds that resolve where they land: the horde trails a retreating
+    // player at six to twelve metres, and a shell that always flies its full eighteen
+    // bursts in the empty floor past it, which is why all three area weapons did
+    // essentially nothing under a held trigger before this branch existed. The distance
+    // is measured from the muzzle like the auto-fire lead above, and a pointer at the
+    // player's feet still gets a `LOB_MIN` throw so the burst does not detonate on them.
+    // Zero means the device steered a line only — a hand-built frame, a keyboard with no
+    // mouse over the floor — and keeps the full-range throw.
+    if (aimDist > 0 && (def.fire === 'arc' || def.fire === 'orb')) {
+      const reach = aimDist - muzzle;
+      lob = reach > def.range ? def.range : reach < LOB_MIN ? LOB_MIN : reach;
     }
   }
 

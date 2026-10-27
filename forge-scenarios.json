@@ -3,85 +3,289 @@
     "name": "slice",
     "path": "/?seed=1",
     "steps": [
-      { "wait": 4000 },
-      { "press": "Enter" },
-      { "wait": 600 },
-      { "state": { "scene": "==playing" } },
-      { "hold": ["KeyD", 1500] },
-      { "state": { "player.x": ">0.5" } },
-      { "wait": 9000 },
-      { "state": { "kills": ">0" } },
-      { "shot": "play" },
-      { "press": "Escape" },
-      { "wait": 400 },
-      { "state": { "scene": "==paused" } },
-      { "shot": "pause" },
-      { "press": "Escape" },
-      { "wait": 400 },
-      { "state": { "scene": "==playing" } },
-      { "state": { "errors": "==0" } }
+      {
+        "wait": 4000
+      },
+      {
+        "press": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "state": {
+          "scene": "==playing"
+        }
+      },
+      {
+        "hold": [
+          "KeyD",
+          1500
+        ]
+      },
+      {
+        "state": {
+          "player.x": ">0.5"
+        }
+      },
+      {
+        "wait": 9000
+      },
+      {
+        "state": {
+          "kills": ">0"
+        }
+      },
+      {
+        "shot": "play"
+      },
+      {
+        "press": "Escape"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "state": {
+          "scene": "==paused"
+        }
+      },
+      {
+        "shot": "pause"
+      },
+      {
+        "press": "Escape"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "state": {
+          "scene": "==playing"
+        }
+      },
+      {
+        "state": {
+          "errors": "==0"
+        }
+      }
     ]
   },
   {
     "name": "hunting",
     "path": "/?seed=5",
     "steps": [
-      { "wait": 4000 },
-      { "press": "Enter" },
-      { "wait": 600 },
-      { "state": { "scene": "==playing", "activeWeapon": "==pistol", "weapons.length": "==1" } },
-      { "mouse": [1040, 320, "down"] },
-      { "wait": 600 },
-      { "mouse": [1040, 320, "up"] },
-      { "hold": ["KeyD", 1500] },
-      { "mouse": [330, 300] },
-      { "wait": 4000 },
-      { "state": { "kills": ">0" } },
-      { "shot": "hunt" },
-      { "state": { "errors": "==0" } }
+      {
+        "wait": 4000
+      },
+      {
+        "press": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "state": {
+          "scene": "==playing",
+          "activeWeapon": "==pistol",
+          "weapons.length": "==1"
+        }
+      },
+      {
+        "mouse": [
+          1040,
+          320,
+          "down"
+        ]
+      },
+      {
+        "wait": 600
+      },
+      {
+        "mouse": [
+          1040,
+          320,
+          "up"
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          1500
+        ]
+      },
+      {
+        "mouse": [
+          330,
+          300
+        ]
+      },
+      {
+        "wait": 4000
+      },
+      {
+        "state": {
+          "kills": ">0"
+        }
+      },
+      {
+        "shot": "hunt"
+      },
+      {
+        "state": {
+          "errors": "==0"
+        }
+      }
     ]
   },
   {
     "name": "save",
     "path": "/?seed=1",
     "steps": [
-      { "wait": 4000 },
-      { "press": "Enter" },
-      { "wait": 600 },
-      { "state": { "scene": "==playing", "tick": ">start" } },
-      { "hold": ["KeyD", 5000] },
-      { "state": { "player.x": ">2", "tick": ">60" } },
-      { "press": "Escape" },
-      { "wait": 400 },
-      { "state": { "scene": "==paused" } },
-      { "shot": "pause" },
-      { "click": "[data-scene='paused'] [data-action='save']" },
-      { "click": "[data-scene='paused'] [data-action='menu']" },
-      { "wait": 500 },
-      { "state": { "scene": "==menu" } },
-      { "shot": "title" },
-      { "click": "[data-scene='menu'] [data-action='continue']" },
-      { "wait": 300 },
-      { "state": { "scene": "==playing", "player.x": ">2", "tick": ">60", "errors": "==0" } },
-      { "shot": "resume" }
+      {
+        "wait": 4000
+      },
+      {
+        "press": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "state": {
+          "scene": "==playing",
+          "tick": ">start"
+        }
+      },
+      {
+        "hold": [
+          "KeyD",
+          5000
+        ]
+      },
+      {
+        "state": {
+          "player.x": ">2",
+          "tick": ">60"
+        }
+      },
+      {
+        "press": "Escape"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "state": {
+          "scene": "==paused"
+        }
+      },
+      {
+        "shot": "pause"
+      },
+      {
+        "click": "[data-scene='paused'] [data-action='save']"
+      },
+      {
+        "click": "[data-scene='paused'] [data-action='menu']"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "state": {
+          "scene": "==menu"
+        }
+      },
+      {
+        "shot": "title"
+      },
+      {
+        "click": "[data-scene='menu'] [data-action='continue']"
+      },
+      {
+        "wait": 300
+      },
+      {
+        "state": {
+          "scene": "==playing",
+          "player.x": ">2",
+          "tick": ">60",
+          "errors": "==0"
+        }
+      },
+      {
+        "shot": "resume"
+      }
     ]
   },
   {
     "name": "arena",
     "path": "/?seed=7&arena=1",
     "steps": [
-      { "wait": 5000 },
-      { "state": { "mode": "==arena", "scene": "==playing" } },
-      { "hold": ["KeyD", 2000] },
-      { "wait": 9000 },
-      { "press": "1" },
-      { "wait": 400 },
-      { "press": "1" },
-      { "wait": 600 },
-      { "state": { "mode": "==arena", "scene": "==playing", "enemies.count": ">0" } },
-      { "shot": "arena" },
-      { "wait": 8000 },
-      { "state": { "mode": "==arena", "enemies.count": ">0", "kills": ">0", "errors": "==0" } }
+      {
+        "wait": 5000
+      },
+      {
+        "state": {
+          "mode": "==arena",
+          "scene": "==playing"
+        }
+      },
+      {
+        "hold": [
+          "KeyD",
+          2000
+        ]
+      },
+      {
+        "wait": 9000
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 500
+      },
+      {
+        "state": {
+          "mode": "==arena",
+          "scene": "==playing",
+          "enemies.count": ">0"
+        }
+      },
+      {
+        "shot": "arena"
+      },
+      {
+        "wait": 8000
+      },
+      {
+        "state": {
+          "mode": "==arena",
+          "enemies.count": ">0",
+          "kills": ">0",
+          "errors": "==0"
+        }
+      }
     ]
   }
 ]

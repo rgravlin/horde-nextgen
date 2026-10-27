@@ -416,6 +416,7 @@ describe('input frames', () => {
       moveY: 0,
       aimX: 0,
       aimY: 0,
+      aimDist: 0,
       fire: false,
       dash: false,
       swap: false,

@@ -156,6 +156,49 @@ describe('input sampler', () => {
     expect(frame.aimX).toBeCloseTo(1, 6);
   });
 
+  it('carries the metres to the ground point beside the direction', () => {
+    // The pair alone says which way; the two kinds that resolve where they land (`arc` and
+    // `orb`) also need how far, and the only place that number exists is the cursor's own
+    // ground point. A (3, 4) offset is exactly 5 m, so the distance is checked as an exact
+    // number rather than a direction: a sampler that normalised and threw the length away
+    // would pass the two assertions above and fail this one.
+    const { host, sampler } = makeSampler((_x, _y, out) => {
+      out.x = 3;
+      out.y = 4;
+      return true;
+    });
+    const frame = createInputFrame();
+    host.raise('mousemove', { clientX: 100, clientY: 100 });
+    sampler.sample(frame);
+    expect(frame.aimDist).toBeCloseTo(5, 6);
+  });
+
+  it('keeps the last distance when the pointer leaves the floor, and reports none without a floor', () => {
+    let grounded = true;
+    const { host, sampler } = makeSampler((_x, _y, out) => {
+      if (!grounded) return false;
+      out.x = 8;
+      out.y = 0;
+      return true;
+    });
+    const frame = createInputFrame();
+    host.raise('mousemove', { clientX: 100, clientY: 100 });
+    sampler.sample(frame);
+    expect(frame.aimDist).toBeCloseTo(8, 6);
+    // Drifting over the sky keeps the last throw rather than snapping the shell back to the
+    // top of the weapon's range, which is the same reason the direction is kept.
+    grounded = false;
+    sampler.sample(frame);
+    expect(frame.aimDist).toBeCloseTo(8, 6);
+
+    // No `project` port at all — a headless run, or a build with no camera to ask — leaves
+    // the distance at 0, which the sim reads as "only a line was steered".
+    const bare = makeSampler();
+    const f2 = createInputFrame();
+    bare.sampler.sample(f2);
+    expect(f2.aimDist).toBe(0);
+  });
+
   it('releases every key when the window loses focus', () => {
     const { host, sampler } = makeSampler();
     const frame = createInputFrame();

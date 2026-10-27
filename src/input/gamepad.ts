@@ -27,7 +27,9 @@
  * "a half-pushed stick stays half as fast". Inside the dead zone a stick gives nothing; past it
  * the reading is rescaled from zero, so clearing the zone does not jump to a quarter speed. That
  * rescale is why the dead zone is the same number the replay packer cuts at (`MOVE_DEAD`): a move
- * the pad emits is a move a replay can pack.
+ * the pad emits is a move a replay can pack. The right stick's rescaled length goes into the frame
+ * a second time as the aim *distance*, so a pad can put a lob somewhere rather than only along a
+ * line (`PAD_AIM_RANGE`).
  *
  * Nothing here is stateful beyond one byte per button and three numbers for a stick, and the
  * pad's reading is *merged into* the frame the keyboard already wrote: a resting stick never
@@ -46,6 +48,16 @@ import type { CommandBits } from './sampler';
  * steering the same way.
  */
 export const PAD_DEAD = MOVE_DEAD;
+
+/**
+ * Metres a full right-stick push aims a lob at, before the weapon clamps it to its own reach.
+ *
+ * A stick carries no distance, so this is a convention rather than a reading: pulled back the
+ * throw is short, pushed out it reaches the weapon's full range, which is what a pad got before
+ * the distance existed at all. Eighteen is the longest lob in the table, so a full push still
+ * means "as far as this gun throws" and every shorter push means "where the thumb is pointing".
+ */
+export const PAD_AIM_RANGE = 18;
 
 /**
  * Which screen the face buttons are read against.
@@ -252,11 +264,15 @@ export class GamepadReader {
     }
 
     if (this.readStick(axes, RIGHT_X, RIGHT_Y)) {
-      // Aim wants a direction, not a magnitude: the stick's own length only says how hard the
-      // thumb is leaning, and `step.ts` would divide it out anyway.
-      const k = 1 / Math.sqrt(stick.len2);
+      // The pair goes in normalised because `step.ts` divides its length out — so the stick's own
+      // magnitude is not wasted, it goes in beside the pair as the throw distance, which is the
+      // only way a pad can aim the two weapons that resolve where they land. A full push is the
+      // weapon's full reach (`PAD_AIM_RANGE`), a pulled-back stick a shorter one.
+      const mag = Math.sqrt(stick.len2);
+      const k = 1 / mag;
       frame.aimX = stick.x * k;
       frame.aimY = stick.y * k;
+      frame.aimDist = mag * PAD_AIM_RANGE;
       // Firing while aimed, and a held trigger is also what makes the shot go where the stick
       // points: auto-fire leads the nearest body instead of steering (`wantsFire`, and the
       // `auto` argument of `fire`, in `systems/weapons.ts`).

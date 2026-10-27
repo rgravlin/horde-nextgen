@@ -43,7 +43,9 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
   - per-tick event ring buffers (hit, kill, spawn, sfx), which the renderer and audio *read* without ever writing to the sim
 - **Determinism:** the same seed plus the same input log gives the same `hashWorld(world)` (FNV-1a over the pools).
 - **Saves:** `serialize(world)` writes a JSON snapshot to localStorage `neonhorde.save.v1`. It autosaves every 30 s and at the end of each chapter. Settings and history are stored under `neonhorde.settings.v1` and `neonhorde.meta.v1`.
-- **Replay file:** `{seed, chapter, inputs: Uint32 bitmask + aim per tick}`.
+- **Replay file:** `{seed, chapter, autoFire, ticks, inputs: Uint32 bitmask + aim pair + aim distance per tick}`.
+  The 32-bit word is full, so the two analogue aim numbers ride beside it at full precision: the pair is quantised
+  by the packer and the distance has no bits to live in, and both decide where a shot goes.
 - **Pause** stops calling `step()`. The render loop keeps drawing a frozen frame.
 - **Renderer (`src/render/`):**
   - one instanced pair per enemy archetype — a body batch and an accent-core batch — drawing a
@@ -72,7 +74,8 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
   - **One dead zone, shared.** The 0.2 is `MOVE_DEAD` from `src/sim/input.ts` — the same cut the replay packer calls "centred" — and the reading is rescaled from zero past it, so clearing the zone does not jump to a quarter speed, a full push is still full speed, and a pad-driven run packs into a replay unchanged.
   - **Not in the bind map.** Pads are not remappable in the Controls tab: a stick is not a key under any mapping and the face buttons mean a different thing per screen. They get their own two tables in `gamepad.ts` while sharing the keyboard's action vocabulary (`heldFlagOf`, `pickSlotOf`), so a pad and a key that both mean `dash` are read as held the same way.
 - **Keybinds** can be remapped in settings.
-- **Input path:** `InputSampler` (DOM) → once per tick it fills a plain `InputFrame {moveX, moveY, aimX, aimY, fire, dash, swap, pick}` → `step(world, frame)`. Tests and replays build `InputFrame`s directly.
+- **Input path:** `InputSampler` (DOM) → once per tick it fills a plain `InputFrame {moveX, moveY, aimX, aimY, aimDist, fire, dash, swap, pick}` → `step(world, frame)`. Tests and replays build `InputFrame`s directly.
+- **Aim is a point, not only a line.** `aimX`/`aimY` say which way and `aimDist` says how far (metres from the player to the ground point under the cursor; 0 when the device only steers a line). The two kinds whose damage resolves where they land — `arc` and `orb` — read the distance and put the burst there; a round that travels needs only the line. Without it a shell always flew to the top of its range, which against a horde trailing a retreating player means it burst on empty floor: measured on a pack 6–12 m out with the trigger held, the catapult, the singularity gun and the disruptor orb all did essentially nothing. Auto-fire does not use it (it leads the nearest body, which is the point of the setting), and a hand-built frame that leaves it at 0 keeps the old full-range throw.
 
 ## State for checks
 `window.__forgeState()` returns a fresh plain JSON object. The type of record is `ForgeState` in `src/game/appTypes.ts` — the sketch below summarizes it, and that interface is what the code and the scenarios read:

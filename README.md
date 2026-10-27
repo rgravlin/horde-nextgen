@@ -218,6 +218,11 @@ Keyboard, mouse and gamepad are read the same way: once per frame into one `Inpu
 all `step()` ever sees. Nothing changes inside a key or button handler, so a keyboard run, a pad
 run and a recorded replay all drive the same simulation code.
 
+The aim carries a distance as well as a direction: where the cursor points on the floor, or how hard the
+right stick is pushed. A round that travels only needs the line, but a catapult shell and an orb burst
+where they land, so they read the distance and go where you pointed rather than to the top of the
+weapon's range.
+
 ### Keyboard and mouse
 
 | what | keys |

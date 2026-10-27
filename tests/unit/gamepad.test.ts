@@ -160,6 +160,7 @@ describe('gamepad sticks', () => {
 
     expect(frame.aimX).toBe(0);
     expect(frame.aimY).toBe(1);
+    expect(frame.aimDist).toBe(0);
     expect(frame.fire).toBe(false);
   });
 

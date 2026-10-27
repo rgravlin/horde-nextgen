@@ -268,6 +268,7 @@ describe('headless replay', () => {
     expect(file.ticks).toBe(700);
     expect(typeof file.codes).toBe('string');
     expect(file.aim).toHaveLength(1400);
+    expect(file.lob).toHaveLength(700);
 
     const loaded = readReplay(file);
     expect(loaded).not.toBeNull();
@@ -277,7 +278,12 @@ describe('headless replay', () => {
 
     // The halfway fingerprint too: a divergence that healed itself by the end is still a
     // divergence, and a replay that only matched on the last tick would be a coincidence.
-    const half = playReplay({ ...loaded!, codes: loaded!.codes.slice(0, 350), aim: loaded!.aim.slice(0, 700) });
+    const half = playReplay({
+      ...loaded!,
+      codes: loaded!.codes.slice(0, 350),
+      aim: loaded!.aim.slice(0, 700),
+      lob: loaded!.lob.slice(0, 350),
+    });
     expect(hashWorld(half)).toBe(marks[0].hash);
   });
 
@@ -326,11 +332,17 @@ describe('headless replay', () => {
     const shortAim = structuredClone(file);
     shortAim.aim = file.aim.slice(0, file.aim.length - 1);
     const wrongVersion = structuredClone(file);
-    wrongVersion.v = 'v2';
+    wrongVersion.v = 'v1';
     const noAim = structuredClone(file);
     delete (noAim as { aim?: number[] }).aim;
+    // A file from before the aim distance existed. Playing it would lob every shell to the top
+    // of its range rather than where the run landed it, so it reads as no replay, not a short one.
+    const noLob = structuredClone(file);
+    delete (noLob as { lob?: number[] }).lob;
+    const shortLob = structuredClone(file);
+    shortLob.lob = file.lob.slice(0, file.lob.length - 1);
 
-    for (const data of [null, 7, {}, file.seed, shortCodes, shortAim, wrongVersion, noAim]) {
+    for (const data of [null, 7, {}, file.seed, shortCodes, shortAim, wrongVersion, noAim, noLob, shortLob]) {
       expect(readReplay(data)).toBeNull();
     }
   });

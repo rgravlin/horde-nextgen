@@ -2,15 +2,15 @@
  * Headless replay: a run's input, recorded and played back.
  *
  * A replay is a *recipe* rather than a snapshot. It carries the seed, the chapter the run was
- * played in and one packed frame code per tick plus its aim pair, and `playReplay` rebuilds
- * the run from the start by handing that input to `step`. That is what keeps it a few tens of
- * kilobytes for a whole chapter instead of a megabyte, and it is only possible because the sim
- * has no other input: no clock, no `Math.random`, no DOM (ARCHITECTURE.md "Data flow"). A save
- * says *what was*; a replay says *how it happened*, which is the thing you want when a
- * divergence needs hunting — replay a recorded run against a changed build and `hashWorld`
- * names the tick it stopped matching.
+ * played in and one packed frame code per tick plus its aim pair and aim distance, and
+ * `playReplay` rebuilds the run from the start by handing that input to `step`. That is what
+ * keeps it a few tens of kilobytes for a whole chapter instead of a megabyte, and it is only
+ * possible because the sim has no other input: no clock, no `Math.random`, no DOM
+ * (ARCHITECTURE.md "Data flow"). A save says *what was*; a replay says *how it happened*, which
+ * is the thing you want when a divergence needs hunting — replay a recorded run against a
+ * changed build and `hashWorld` names the tick it stopped matching.
  *
- * **Why the aim pair travels beside the packed code.** `input.ts` packs a tick into one Uint32,
+ * **Why the aim numbers travel beside the packed code.** `input.ts` packs a tick into one Uint32,
  * and that is exact for the frames the sampler can raise from keys: it only ever writes `-1`,
  * `0` or `1` into the move pair, and the rest are flags. Aim is not like that — the sampler
  * projects the pointer onto the floor plane and normalises, which lands on an arbitrary
@@ -18,11 +18,13 @@
  * target choice, so a run replayed from the packed bits alone is a run fired a few micrometres
  * off each tick. Measured, that is not a rounding argument: a six-hundred-tick run with
  * pointer-derived aim ends on a different fingerprint when its aim is rebuilt from the bits.
- * So the code carries what the channel was designed for and the two doubles carry the rest,
- * which is the split `input.ts` itself names ("anything needing frame-exact analogue input
- * records the floats instead"). They stay doubles in the file rather than float bits for the
- * same reason: JSON round-trips a JS number exactly, and 32 bits would lose the thing they are
- * there to keep.
+ * The aim *distance* has no bits either — the word is already full — and it is not a rounding
+ * argument at all: it decides where a lob burst lands, so a file without it would replay the
+ * throw somewhere else. So the code carries what the channel was designed for and the doubles
+ * carry the rest, which is the split `input.ts` itself names ("anything needing frame-exact
+ * analogue input records the floats instead"). They stay doubles in the file rather than float
+ * bits for the same reason: JSON round-trips a JS number exactly, and 32 bits would lose the
+ * thing they are there to keep.
  *
  * **What is recorded is what was played.** `recordFrame` stores the frame as it went into
  * `step`, so `frameAt` gives that frame back and a run driven from a log reproduces itself
@@ -46,7 +48,7 @@ import { startChapter } from './systems/levels';
 import { createWorld, type World } from './world';
 
 /** The one replay shape this build writes, and the only one it reads. */
-export const REPLAY_VERSION = 'v1';
+export const REPLAY_VERSION = 'v2';
 
 /**
  * A run's input, in the form you record into.
@@ -65,9 +67,17 @@ export interface FrameLog {
   codes: number[];
   /** Aim x and y per tick, two entries per tick, at full precision. */
   aim: number[];
+  /**
+   * Aim distance per tick, in metres — the third aim number, which has no bits to live
+   * in (`packFrame`'s word is full), so it rides here beside the pair.
+   *
+   * It decides where a lob burst lands, so leaving it out of the file would make a
+   * replay of a catapult run a different fight from the run.
+   */
+  lob: number[];
 }
 
-/** The file form of a run: the same two lists, one packed and one plain. */
+/** The file form of a run: the same three lists, one packed and two plain. */
 export interface Replay {
   v: string;
   seed: number;
@@ -79,17 +89,20 @@ export interface Replay {
   codes: string;
   /** The aim pairs, two doubles per tick, exact. */
   aim: number[];
+  /** The aim distances, one double per tick, in metres. */
+  lob: number[];
 }
 
 /** Begin recording. The chapter is part of the recipe, so it has to be known at the start. */
 export function createLog(seed: number, chapter: number | null, autoFire = false): FrameLog {
-  return { seed, chapter, autoFire, codes: [], aim: [] };
+  return { seed, chapter, autoFire, codes: [], aim: [], lob: [] };
 }
 
 /** Record one tick. Call it with the same frame you are about to hand to `step`. */
 export function recordFrame(log: FrameLog, frame: InputFrame): void {
   log.codes.push(packFrame(frame));
   log.aim.push(frame.aimX, frame.aimY);
+  log.lob.push(frame.aimDist);
 }
 
 /**
@@ -102,6 +115,7 @@ export function frameAt(log: FrameLog, at: number, out: InputFrame): InputFrame 
   unpackFrame(log.codes[at], out);
   out.aimX = log.aim[at * 2];
   out.aimY = log.aim[at * 2 + 1];
+  out.aimDist = log.lob[at];
   return out;
 }
 
@@ -115,6 +129,7 @@ export function writeReplay(log: FrameLog): Replay {
     ticks: log.codes.length,
     codes: encodeBlob([Uint32Array.from(log.codes)]),
     aim: log.aim.slice(),
+    lob: log.lob.slice(),
   };
 }
 
@@ -122,8 +137,11 @@ export function writeReplay(log: FrameLog): Replay {
  * Read a replay back, or null if what was handed over is not one.
  *
  * The shape is checked rather than trusted, including the one thing a truncated file breaks:
- * `codes` has to decode to exactly four bytes a tick and `aim` to exactly two pairs, because a
- * log that lost its tail would otherwise play a shorter run and look like it worked.
+ * `codes` has to decode to exactly four bytes a tick, `aim` to two doubles and `lob` to one,
+ * because a log that lost its tail would otherwise play a shorter run and look like it worked.
+ * A v1 file (no `lob`) is read as no replay rather than played with the aim distance missing:
+ * the files this build writes carry it, and a replay that quietly lobs further than the run did
+ * is a replay of a different fight.
  */
 export function readReplay(data: unknown): FrameLog | null {
   if (typeof data !== 'object' || data === null) return null;
@@ -137,11 +155,14 @@ export function readReplay(data: unknown): FrameLog | null {
     if (!Number.isInteger(chapter) || (chapter as number) < 0) return null;
   }
   if (!Number.isInteger(file.ticks) || (file.ticks as number) < 0) return null;
-  if (typeof file.codes !== 'string' || !Array.isArray(file.aim)) return null;
+  if (typeof file.codes !== 'string' || !Array.isArray(file.aim) || !Array.isArray(file.lob)) return null;
 
   const ticks = file.ticks as number;
-  if (file.aim.length !== ticks * 2) return null;
+  if (file.aim.length !== ticks * 2 || file.lob.length !== ticks) return null;
   for (const v of file.aim) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+  }
+  for (const v of file.lob) {
     if (typeof v !== 'number' || !Number.isFinite(v)) return null;
   }
 
@@ -154,6 +175,7 @@ export function readReplay(data: unknown): FrameLog | null {
     autoFire: file.autoFire as boolean,
     codes: Array.from(codes),
     aim: file.aim.slice() as number[],
+    lob: file.lob.slice() as number[],
   };
 }
 

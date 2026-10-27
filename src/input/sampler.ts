@@ -129,6 +129,8 @@ export class InputSampler {
   private pickLatch = 0;
   private aimX = 1;
   private aimY = 0;
+  /** Metres from the player to the last ground point the pointer was over; 0 before there was one. */
+  private aimDist = 0;
 
   /** The listeners actually registered, so `dispose` can take them back. */
   private readonly bound: Array<[string, (e: InputEventLike) => void]> = [];
@@ -292,10 +294,13 @@ export class InputSampler {
   /**
    * Aim at the ground point under the pointer.
    *
-   * The direction, not the point, goes into the frame: a 20 m shot and a 2 m one
-   * leave along the same line, and keeping the last aim when the pointer leaves the
-   * floor is what stops the gun snapping to the player when the cursor drifts over
-   * the sky.
+   * The direction *and* the distance go into the frame. The direction is what a round
+   * that travels needs; the distance is what the two kinds that resolve where they land
+   * need (`arc` and `orb` in `sim/systems/weapons.ts`), and a lob without one can only
+   * fall at the top of its range, which under a retreating player is a few metres of
+   * empty floor past the crowd it was fired over. Both are kept when the pointer leaves
+   * the floor, which is what stops the gun snapping to the player — and the lob snapping
+   * to full range — when the cursor drifts over the sky.
    */
   private sampleAim(frame: InputFrame): void {
     const project = this.ports.project;
@@ -308,11 +313,13 @@ export class InputSampler {
         if (length > EPS) {
           this.aimX = dx / length;
           this.aimY = dy / length;
+          this.aimDist = length;
         }
       }
     }
     frame.aimX = this.aimX;
     frame.aimY = this.aimY;
+    frame.aimDist = this.aimDist;
   }
 
   /**

@@ -17,8 +17,9 @@ DOM events + a polled pad ─▶ InputSampler ──(once per tick)──▶ Inp
 ```
 
 - Handlers only set bits in the sampler's scratch `InputFrame`. Gameplay never changes inside a key/mouse handler,
-  so replays and tests build `InputFrame`s directly (`replay.ts` carries `{seed, chapter, autoFire, ticks, codes, aim}`:
-  one packed frame code per tick, with the aim pair kept beside it because the packing quantises it).
+  so replays and tests build `InputFrame`s directly (`replay.ts` carries `{seed, chapter, autoFire, ticks, codes, aim, lob}`:
+  one packed frame code per tick, with the aim pair and the aim distance kept beside it, because the packing quantises the
+  pair and has no bits left for the distance).
 - The gamepad has no events, so it is **polled** inside `sample`, after the keyboard and mouse have written the
   frame, and it only ever adds to it: the move goes to whichever device is pushing harder, the aim goes to the right
   stick only while that stick is out of its dead zone, and a pad button can set a flag but never clear a key's.
@@ -108,7 +109,7 @@ The points below are load-bearing rather than incidental, so they are recorded h
   the float32 patterns. Anything that is a double in the `World` — xp, score, a hazard clock — stays a JSON
   number for the opposite reason: 32 bits would lose the thing it is there to keep.
 - **A replay is a recipe, a save is a state.** `replay.ts` stores the seed, the chapter and one packed frame code
-  per tick plus its aim pair, and `playReplay` rebuilds the run by stepping it, which is what keeps a chapter at
+  per tick plus its aim pair and aim distance, and `playReplay` rebuilds the run by stepping it, which is what keeps a chapter at
   tens of kilobytes and lets a changed build be diffed against a recorded run by hash. It assumes default pool
   sizes; a save carries its own.
 - **The autosave clock counts play seconds.** `AutosaveTimer` in `persistence/autosave.ts` is fed `world.time`, which only

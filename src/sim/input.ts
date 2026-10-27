@@ -5,6 +5,11 @@
  * The sampler in src/input fills a scratch frame from DOM or gamepad state and
  * hands it to step(); handlers never touch game state. Tests and replays build
  * frames directly, which is why this lives in src/sim and imports nothing.
+ *
+ * `aimDist` has no bits: the packed word is already full, so a replay carries the
+ * distance in its float channel beside the aim pair (see `sim/replay.ts`), which is
+ * the split this file's own packing note names — anything needing frame-exact
+ * analogue input records the floats instead.
  */
 
 /** Player intent for one 1/60 s tick. */
@@ -16,6 +21,18 @@ export interface InputFrame {
   /** -1 .. 1, aim direction on the ground plane. */
   aimX: number;
   aimY: number;
+  /**
+   * Metres from the player to the point the aim was steered at, or 0 when the device
+   * only steers a line.
+   *
+   * The two kinds whose damage resolves at a landing point — `arc` and `orb`, in
+   * `systems/weapons.ts` — are the ones that read it: their burst happens where the shot
+   * lands rather than along the line it took, so a lob that always flies to the top of
+   * its range cannot be aimed at the crowd in front of the player. Everything that
+   * steers by cursor or stick can supply a distance; a hand-built frame that leaves it at
+   * 0 keeps the old fly-to-full-range throw.
+   */
+  aimDist: number;
   fire: boolean;
   dash: boolean;
   swap: boolean;
@@ -33,6 +50,7 @@ export const IDLE_FRAME: Readonly<InputFrame> = Object.freeze({
   moveY: 0,
   aimX: 0,
   aimY: 0,
+  aimDist: 0,
   fire: false,
   dash: false,
   swap: false,
@@ -41,7 +59,7 @@ export const IDLE_FRAME: Readonly<InputFrame> = Object.freeze({
 
 /** A new scratch frame, cleared. The sampler keeps one per device, not one per tick. */
 export function createInputFrame(): InputFrame {
-  return { moveX: 0, moveY: 0, aimX: 0, aimY: 0, fire: false, dash: false, swap: false, pick: 0 };
+  return { moveX: 0, moveY: 0, aimX: 0, aimY: 0, aimDist: 0, fire: false, dash: false, swap: false, pick: 0 };
 }
 
 /** Clear a scratch frame in place for reuse. */
@@ -50,6 +68,7 @@ export function resetFrame(f: InputFrame): InputFrame {
   f.moveY = 0;
   f.aimX = 0;
   f.aimY = 0;
+  f.aimDist = 0;
   f.fire = false;
   f.dash = false;
   f.swap = false;
