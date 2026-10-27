@@ -25,6 +25,10 @@
  * camera's 2 m lead stays on the steered aim, because that one is a framing choice rather
  * than a shot line, and it wants a target that does not hop between bodies as the crowd
  * shuffles.
+ *
+ * `drawnFace` is the third thing here because a check needs to be able to ask what was actually
+ * drawn: it turns a rig's live yaw back into the world line its barrel lies along, which is what
+ * lets a scenario compare the picture with the shot instead of with the maths that made it.
  */
 
 import type { World } from '../sim/world';
@@ -82,4 +86,21 @@ export function playerFacing(world: World, out: Face): Face {
  */
 export function yawToFace(x: number, y: number): number {
   return Math.atan2(x, -y);
+}
+
+/**
+ * Read a drawn yaw back as the world line the rig's barrel lies along.
+ *
+ * The inverse of `yawToFace`, and deliberately written from the geometry rather than by undoing
+ * that formula: a turn about Y lays local +z on (sin θ, cos θ) in render space, and the world's
+ * y arrives as -z. That difference is the whole point of reading it back this way — a check that
+ * compared the rig against the *number* that turned it would pass while the barrel pointed a
+ * quarter turn off its own fire, which is the bug this pair of functions was written for.
+ *
+ * Read-only, like the two above: it says what a rig is drawn doing and writes nothing.
+ */
+export function drawnFace(yaw: number, out: Face): Face {
+  out.x = Math.sin(yaw);
+  out.y = -Math.cos(yaw);
+  return out;
 }

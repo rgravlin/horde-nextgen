@@ -30,7 +30,7 @@ import type { World } from '../sim/world';
 import { loadAssets } from './assets';
 import { createCameraRig } from './cameraRig';
 import { createNumbers } from './damageNumbers';
-import { playerFacing, yawToFace, type Face } from './facing';
+import { drawnFace, playerFacing, yawToFace, type Face } from './facing';
 import { createFeel } from './feel';
 import { buildKit, disposeKit, syncKit, type Kit } from './kit';
 import { createLightRig } from './lights';
@@ -66,6 +66,15 @@ export interface View {
    * the sky beyond the floor.
    */
   aim(clientX: number, clientY: number, out: { x: number; y: number }): boolean;
+  /**
+   * Write the line the player's rig is *drawn* pointing along into `out` (x, y).
+   *
+   * Read off the rig's live yaw rather than re-derived from the World, so a check can put it
+   * beside `world.muzzle` and ask whether the barrel lies on its own fire — the fact the two
+   * lines replaced by `facing.ts` used to break, and one that cannot be checked from the
+   * number handed to `place`, which agrees with the shot by construction.
+   */
+  playerFace(out: Face): Face;
   /** Re-read the canvas size: the window resizes, and the canvas starts at 0x0. */
   resize(): void;
 }
@@ -288,6 +297,12 @@ export async function createView(
 
     aim(clientX, clientY, out) {
       return rig.aim(clientX, clientY, out);
+    },
+
+    playerFace(out) {
+      // Read off the rig rather than out of `face`, which is the shot line's scratch: this
+      // answers what the last drawn frame put on screen, and it is asked between frames.
+      return drawnFace(player.group.rotation.y, out);
     },
 
     resize() {

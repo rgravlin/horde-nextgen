@@ -347,6 +347,10 @@ export function createApp(ports: AppPorts): App {
       return binds;
     },
     frameTimes,
+    // The one host field that is not a fact about the shell: the view answers what it drew, so
+    // the state's `barrel` is the rig read back rather than the aim re-stated. Null on a box
+    // that got no backend at all, where nothing is drawn.
+    view,
   };
 
   /** The debug hooks; see `appDebug.ts` for why they read the world through a host. */

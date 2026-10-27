@@ -8,6 +8,7 @@ import { createApp } from '../../src/game/app';
 import { snapshotSettings, type App } from '../../src/game/appTypes';
 import { buildState, measureFps, nearestEnemies, type StateHost } from '../../src/game/appState';
 import { createDebug, type DebugHost } from '../../src/game/appDebug';
+import type { View } from '../../src/render/renderer';
 import { defaultSettings, SAVE_KEY, type StorageLike } from '../../src/game/persistence';
 import { createInputFrame } from '../../src/sim/input';
 import { startArena, startChapter } from '../../src/sim/systems/levels';
@@ -215,6 +216,36 @@ describe('the state read over a bare world', () => {
   it('reads fps off a cold ring as 0', () => {
     expect(buildState(hostOver(createWorld(7))).fps).toBe(0);
   });
+
+  it('asks the view which way the gun is drawn, and echoes the shot line when there is no view', () => {
+    const w = createWorld(7);
+    // A picture that deliberately disagrees with the sim's line, which is the only way to check
+    // the seam is a *read* of the drawing: a `barrel` derived from the shot line would agree
+    // with itself every time, including the times the barrel pointed a quarter turn off it.
+    w.muzzle.x = 0;
+    w.muzzle.y = 1;
+    const drawn: View = {
+      backend: 'none',
+      quality: 'low',
+      errors: 0,
+      draw: () => {},
+      aim: () => false,
+      playerFace: (out) => {
+        out.x = 1;
+        out.y = 0;
+        return out;
+      },
+      resize: () => {},
+    };
+    expect(buildState(hostOver(w)).player).toMatchObject({
+      shot: { x: 0, y: 1 },
+      barrel: { x: 0, y: 1 },
+    });
+    expect(buildState(hostOver(w, { view: drawn })).player).toMatchObject({
+      shot: { x: 0, y: 1 },
+      barrel: { x: 1, y: 0 },
+    });
+  });
 });
 
 describe('the state helpers', () => {
@@ -398,7 +429,7 @@ describe('the same pieces inside the shell', () => {
       ].sort(),
     );
     expect(Object.keys(state.player).sort()).toEqual(
-      ['x', 'y', 'hp', 'maxHp', 'shield', 'level', 'xp', 'dashReady', 'alive'].sort(),
+      ['x', 'y', 'hp', 'maxHp', 'shield', 'level', 'xp', 'dashReady', 'alive', 'shot', 'barrel'].sort(),
     );
     expect(Object.keys(state.wave).sort()).toEqual(['index', 'timeLeft', 'bossAlive'].sort());
     expect(Object.keys(state.boss).sort()).toEqual(['alive', 'name', 'hp', 'maxHp'].sort());

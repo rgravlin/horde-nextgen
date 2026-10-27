@@ -28,6 +28,7 @@ import type { BindTable } from '../input/bindings';
 import type { Settings } from './persistence';
 import { bossesAlive } from '../sim/systems/boss';
 import type { World } from '../sim/world';
+import type { View } from '../render/renderer';
 import { snapshotSettings, type ForgeState, type ForgeWeapon, type SceneId } from './appTypes';
 
 /** How deep the `enemies.nearest` list goes; see `nearestEnemies`. */
@@ -55,6 +56,15 @@ export interface StateHost {
   readonly bindings: BindTable;
   /** The frame-time ring the loop writes; `measureFps` reads it back. */
   readonly frameTimes: Float32Array;
+  /**
+   * The renderer, when this machine got one.
+   *
+   * It is here for one question: which way is the player's gun *drawn*. Only the view can
+   * answer that, so the state asks it rather than assuming the picture matches the sim — that
+   * assumption is what let a barrel be drawn a quarter turn off its own tracers. A bare-`World`
+   * host leaves it out, which is the same case as a machine with no backend: nothing is drawn.
+   */
+  readonly view?: View | null;
 }
 
 /**
@@ -114,10 +124,32 @@ export function measureFps(frameTimes: Float32Array): number {
   return Math.round(n / sum);
 }
 
+/**
+ * The player's two lines: the one the round takes and the one the rig is drawn along.
+ *
+ * `shot` is the World's, written once a tick by the weapon pass. `barrel` is the view's, read
+ * off the rig's live yaw. A check puts them side by side and fails when they come apart, which
+ * is the only way a scenario can see the two facing mistakes: both left the *picture* lying
+ * while the sim carried on correctly, and a state key derived from the sim's own answer could
+ * only ever agree with itself.
+ *
+ * With no view to ask there is nothing drawn, so `barrel` answers the line the rig would have
+ * been turned to. Both pairs stay unit length either way, since a reader divides by them.
+ */
+function aimLines(host: StateHost): { shot: { x: number; y: number }; barrel: { x: number; y: number } } {
+  const shot = { x: host.world.muzzle.x, y: host.world.muzzle.y };
+  const view = host.view;
+  if (!view) return { shot, barrel: { x: shot.x, y: shot.y } };
+  const barrel = { x: 0, y: 0 };
+  view.playerFace(barrel);
+  return { shot, barrel };
+}
+
 /** Paint the whole `__forgeState()` shape from a live shell. */
 export function buildState(host: StateHost): ForgeState {
   const w = host.world;
   const p = w.player;
+  const lines = aimLines(host);
 
   const byType: Record<string, number> = {};
   for (let i = 0; i < ENEMIES.length; i++) byType[ENEMIES[i].id] = 0;
@@ -180,6 +212,8 @@ export function buildState(host: StateHost): ForgeState {
       xp: p.xp,
       dashReady: p.dashCd <= 0,
       alive: p.alive,
+      shot: lines.shot,
+      barrel: lines.barrel,
     },
     // The same read the chapter machine waits on, so the number a scenario asserts on
     // and the number that ends the chapter cannot drift apart: `bossesAlive` is the flag

@@ -4,7 +4,7 @@ import { Scene, Vector3, type BufferGeometry } from 'three/webgpu';
 
 import { enemyIndex } from '../../src/content/enemies';
 import { WEAPONS } from '../../src/content/weapons';
-import { playerFacing, yawToFace, type Face } from '../../src/render/facing';
+import { drawnFace, playerFacing, yawToFace, type Face } from '../../src/render/facing';
 import { playerTrim, weaponKit } from '../../src/render/meshes';
 import { createPlayerRig, type PlayerRig } from '../../src/render/playerRig';
 import { profileFor } from '../../src/render/quality';
@@ -334,5 +334,43 @@ describe('a line that is not a direction', () => {
     expect(axis.x, 'and a finite barrel off it').not.toBeNaN();
     expect(axis.y, 'and a finite barrel off it').not.toBeNaN();
     expect(Math.hypot(axis.x, axis.y), 'and still a unit one').toBeCloseTo(1, 6);
+  });
+});
+
+describe('the read-back', () => {
+  /**
+   * `drawnFace`, asked the way `renderer.ts`'s `playerFace` door and then `buildState` ask it:
+   * this is how a browser scenario sees which way the gun was drawn, so it has to answer from
+   * the rig and not from the shot line.
+   *
+   * Both halves are checked against something other than the helper. The good yaw is read back
+   * twice — once analytically, once out of a turned rig's world matrix — because a read that
+   * merely echoed the sim's own line would report "barrel on its fire" every time, including
+   * while the barrel pointed a quarter turn off it. And the shipped `atan2` is read back here
+   * too, required to miss: that is what makes the seam a check rather than a restatement.
+   */
+  it('reads a rig yaw back as the line its barrel lies along', () => {
+    const world = worldWith('pistol');
+    for (const aim of [
+      { x: 1, y: 0 },
+      { x: 0, y: 1 },
+      { x: -1, y: 0 },
+      { x: 0, y: -1 },
+    ]) {
+      const good = drawnFace(yawToFace(aim.x, aim.y), { x: 0, y: 0 });
+      expect(good.x, `${aim.x},${aim.y}: round trip x`).toBeCloseTo(aim.x, 9);
+      expect(good.y, `${aim.x},${aim.y}: round trip y`).toBeCloseTo(aim.y, 9);
+
+      const rig = rigTurnedTo(world, yawToFace(aim.x, aim.y));
+      const axis = barrelAxis(rig);
+      expect(axis.x, `${aim.x},${aim.y}: matches the geometry x`).toBeCloseTo(good.x, 9);
+      expect(axis.y, `${aim.x},${aim.y}: matches the geometry y`).toBeCloseTo(good.y, 9);
+
+      const old = drawnFace(Math.atan2(aim.y, aim.x), { x: 0, y: 0 });
+      expect(miss(aim, old), `${aim.x},${aim.y}: the old yaw reads as a quarter turn`).toBeGreaterThan(
+        QUARTER_TURN,
+      );
+      expect(agree(aim, old), `${aim.x},${aim.y}: and not merely sideways`).toBeLessThan(0.06);
+    }
   });
 });

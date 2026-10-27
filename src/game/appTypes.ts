@@ -113,6 +113,21 @@ export interface ForgeState {
     xp: number;
     dashReady: boolean;
     alive: boolean;
+    /**
+     * The line this tick's round takes — `world.muzzle`, the pair the weapon pass wrote and the
+     * shot spent: led at the nearest body under auto-fire, the steered pair otherwise.
+     */
+    shot: { x: number; y: number };
+    /**
+     * The line the player's rig is *drawn* pointing along, read back off the rig rather than
+     * re-derived from the same source as `shot`.
+     *
+     * Both halves of the facing bug hid here: the rig was turned from the steered aim rather
+     * than the shot line, and with an `atan2` a quarter turn off the floor's. Either way these
+     * two came apart, which is why a check compares them instead of reading one of them. With
+     * no view there is nothing drawn, so it answers the line the rig would have been turned to.
+     */
+    barrel: { x: number; y: number };
   };
   wave: { index: number; timeLeft: number; bossAlive: boolean };
   /**

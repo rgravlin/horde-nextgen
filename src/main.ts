@@ -201,6 +201,10 @@ function idleState(backend: ForgeState['backend']): ForgeState {
       xp: 0,
       dashReady: true,
       alive: true,
+      // The aim a World is born with, so the placeholder answers the same question the live
+      // state does — and nothing reading the two pairs off a menu page divides by a zero.
+      shot: { x: 1, y: 0 },
+      barrel: { x: 1, y: 0 },
     },
     wave: { index: 1, timeLeft: 0, bossAlive: false },
     boss: { alive: false, name: '', hp: 0, maxHp: 0 },

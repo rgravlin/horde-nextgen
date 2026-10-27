@@ -239,49 +239,29 @@
         ]
       },
       {
-        "wait": 9000
+        "mouse": [
+          1040,
+          450,
+          "down"
+        ]
+      },
+      {
+        "wait": 3000
+      },
+      {
+        "mouse": [
+          700,
+          140
+        ]
+      },
+      {
+        "wait": 3000
       },
       {
         "press": "1"
       },
       {
-        "wait": 400
-      },
-      {
-        "press": "1"
-      },
-      {
-        "wait": 600
-      },
-      {
-        "press": "1"
-      },
-      {
-        "wait": 500
-      },
-      {
-        "press": "1"
-      },
-      {
-        "wait": 500
-      },
-      {
-        "press": "1"
-      },
-      {
-        "wait": 400
-      },
-      {
-        "press": "1"
-      },
-      {
-        "wait": 400
-      },
-      {
-        "press": "1"
-      },
-      {
-        "wait": 400
+        "wait": 300
       },
       {
         "press": "1"
@@ -305,11 +285,19 @@
         "state": {
           "mode": "==arena",
           "scene": "==playing",
-          "enemies.count": ">0"
+          "enemies.count": ">0",
+          "errors": "==0"
         }
       },
       {
         "shot": "arena"
+      },
+      {
+        "mouse": [
+          1040,
+          450,
+          "up"
+        ]
       },
       {
         "wait": 8000
@@ -319,6 +307,115 @@
           "mode": "==arena",
           "enemies.count": ">0",
           "kills": ">0",
+          "errors": "==0"
+        }
+      }
+    ]
+  },
+  {
+    "name": "facing",
+    "path": "/?seed=5",
+    "steps": [
+      {
+        "wait": 4000
+      },
+      {
+        "press": "Enter"
+      },
+      {
+        "wait": 600
+      },
+      {
+        "state": {
+          "scene": "==playing",
+          "errors": "==0"
+        }
+      },
+      {
+        "mouse": [
+          1330,
+          450,
+          "down"
+        ]
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "state": {
+          "player.shot.x": ">0.9",
+          "player.barrel.x": ">0.9",
+          "errors": "==0"
+        }
+      },
+      {
+        "shot": "aim-right"
+      },
+      {
+        "mouse": [
+          720,
+          120
+        ]
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "state": {
+          "player.shot.y": ">0.9",
+          "player.barrel.y": ">0.9",
+          "errors": "==0"
+        }
+      },
+      {
+        "shot": "aim-up"
+      },
+      {
+        "mouse": [
+          720,
+          120,
+          "up"
+        ]
+      },
+      {
+        "wait": 2500
+      },
+      {
+        "press": "1"
+      },
+      {
+        "mouse": [
+          1040,
+          320,
+          "down"
+        ]
+      },
+      {
+        "wait": 1500
+      },
+      {
+        "mouse": [
+          1040,
+          320,
+          "up"
+        ]
+      },
+      {
+        "wait": 2000
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 4000
+      },
+      {
+        "shot": "horde"
+      },
+      {
+        "state": {
+          "kills": ">0",
+          "enemies.count": ">0",
           "errors": "==0"
         }
       }
