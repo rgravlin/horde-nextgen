@@ -45,16 +45,21 @@ DOM events + a polled pad ─▶ InputSampler ──(once per tick)──▶ Inp
 - Delivery lives one folder away from the trigger: `systems/weapons.ts` owns the hand, the cooldown, the magazine, the
   two gauges, the draw and the aim, and hands the shot to `systems/projectiles/`, which owns everything after the
   trigger — the swept-segment test for a round, the march for a ray and the beam, the arc of a sweep, the jumps of a
-  bolt and the burst of a lobbed shell or a singularity. Damage, falloff, pierce and knockback still all come off the
-  shot's `WeaponDef`, and the seven delivery paths share one `damage` helper so a ray, a sweep and a burst that reach
-  the same body for the same reason report the same number — and each reports it as one `Hit` event, a beam's
-  per-tick cuts included. What keeps hurting a body after the shot is gone is a status, not a shot: `systems/status.ts`
-  owns the burn (one channel per body, applied by a hit, ticked once per tick in the weapon pass) and the armour maths
-  a burn and a beam share. The enemy side mirrors the split rather than reinventing it: `systems/enemies/` decides
-  when a ranged body fires and hands the round over, `systems/enemyProjectiles.ts` owns everything after that — the
-  swept-segment test for a bolt, the burst at the end of a grenade's arc — on its own 512-slot pool. Enemy rounds
-  respect the player's i-frames by passing through an invulnerable player rather than being absorbed, and a grenade's
-  last flight step is clamped to its aim point so the burst opens exactly where its telegraph ring was drawn.
+  bolt and the burst of a lobbed shell or a singularity. The aim is resolved once a tick into `world.muzzle`, which is
+  the line the round takes (led at `world.nearest` when auto-fire is the one shooting, the steered pair otherwise) and
+  which the shot then spends; `render/facing.ts` reads that same field to turn the player's rig, so a barrel cannot be
+  drawn pointing somewhere its own tracers do not go. It is derived per tick and read-only downstream, so it is in
+  neither the save nor the fingerprint, exactly like `hash.findable` above. Damage, falloff, pierce and knockback still
+  all come off the shot's `WeaponDef`, and the seven delivery paths share one `damage` helper so a ray, a sweep and a
+  burst that reach the same body for the same reason report the same number — and each reports it as one `Hit` event, a
+  beam's per-tick cuts included. What keeps hurting a body after the shot is gone is a status, not a shot:
+  `systems/status.ts` owns the burn (one channel per body, applied by a hit, ticked once per tick in the weapon pass)
+  and the armour maths a burn and a beam share. The enemy side mirrors the split rather than reinventing it:
+  `systems/enemies/` decides when a ranged body fires and hands the round over, `systems/enemyProjectiles.ts` owns
+  everything after that — the swept-segment test for a bolt, the burst at the end of a grenade's arc — on its own
+  512-slot pool. Enemy rounds respect the player's i-frames by passing through an invulnerable player rather than
+  being absorbed, and a grenade's last flight step is clamped to its aim point so the burst opens exactly where its
+  telegraph ring was drawn.
 - Iteration is by pool index, lowest index first, and randomness only comes from `world.rng`, so the order never
   depends on JS object or Map iteration.
 - One browser frame: `sampler.sample()` → drain accumulator with `step` → `render(alpha = acc/dt)` + `audio.drain()`

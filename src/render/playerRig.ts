@@ -8,9 +8,10 @@
  * and the switch is one comparison per frame because the shape only changes when a weapon is
  * picked up.
  *
- * The yaw comes from the aim, not from the velocity: this is a twin-stick, so the body points
- * where the gun points. Turning it with the stick would make the aim lead in `cameraRig.ts`
- * meaningless.
+ * The yaw comes from the line the gun is shooting along, not from the velocity and not
+ * straight off the aim either: this is a twin-stick, so the body points where the gun points,
+ * and under auto-fire the gun points at a body rather than at the cursor. `facing.ts` owns
+ * that line and `yawToFace` owns the turn, so the rig and the tracers agree by construction.
  *
  * Read-only and cosmetic, like the rest of `render`: it takes what the simulation says the
  * player looks like and draws that.
@@ -38,7 +39,12 @@ const GLOW = 2.2;
 
 export interface PlayerRig {
   readonly group: Group;
-  /** Stand the rig at a world point, turned to `yaw`, hidden when the player is dead. */
+  /**
+   * Stand the rig at a world point, turned to `yaw`, hidden when the player is dead.
+   *
+   * `yaw` comes from `yawToFace`, which already knows that the rig's forward is local +z;
+   * a yaw handed in from `atan2(aimY, aimX)` would be a quarter turn off.
+   */
   place(x: number, y: number, yaw: number, visible: boolean): void;
   /** Show the gun of the family this weapon index belongs to; -1 shows none. */
   hold(weaponIndex: number): void;

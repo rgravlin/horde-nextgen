@@ -10,7 +10,8 @@
  * `machine.ts` (which backend and which tier this machine gets), `stage.ts` (the air, the floor
  * and the one light that casts shadows), `kit.ts` (everything drawn out of one World's pools,
  * which is a set with a lifetime because a restart builds a new World), `playerRig.ts` (the
- * player's body and the gun in its hand), `cameraRig.ts` (the camera, the shake and what the
+ * player's body and the gun in its hand) and `facing.ts` (the line that gun points along, and
+ * the yaw that turns the rig round), `cameraRig.ts` (the camera, the shake and what the
  * pointer means), `feel.ts` (this frame's events into shove and colour), and the layers that
  * were always their own files — `assets.ts`, `instancing.ts`, `meshes/`, `telegraphs.ts`,
  * `lights.ts`, `particles.ts`, `damageNumbers.ts`, `post.ts`, `quality.ts`.
@@ -29,6 +30,7 @@ import type { World } from '../sim/world';
 import { loadAssets } from './assets';
 import { createCameraRig } from './cameraRig';
 import { createNumbers } from './damageNumbers';
+import { playerFacing, yawToFace, type Face } from './facing';
 import { createFeel } from './feel';
 import { buildKit, disposeKit, syncKit, type Kit } from './kit';
 import { createLightRig } from './lights';
@@ -198,6 +200,12 @@ export async function createView(
    */
   const particleMode: ParticleMode = backend === 'webgpu' ? 'gpu' : 'cpu';
 
+  /**
+   * The line the player's gun shoots along, rewritten once a frame (see `facing.ts`). One
+   * pair for the view's life rather than one per frame, like the camera rig's scratch.
+   */
+  const face: Face = { x: 1, y: 0 };
+
   const view: View = {
     backend,
     quality,
@@ -241,7 +249,11 @@ export async function createView(
       lamps.sync(world.fx, p.x, p.y);
       if (stepping) feel.feed(world);
 
-      player.place(p.x, p.y, Math.atan2(p.aimY, p.aimX), p.alive);
+      // The rig turns along the line the gun shoots, not along the raw aim: under auto-fire
+      // those disagree (the shot leads a body), and `yawToFace` knows the rig's forward is
+      // local +z on a floor whose north is -z, which `atan2(aimY, aimX)` does not.
+      playerFacing(world, face);
+      player.place(p.x, p.y, yawToFace(face.x, face.y), p.alive);
       player.hold(world.slots[world.activeSlot]?.weapon ?? -1);
 
       rig.frame(world, dt, step, orbit);

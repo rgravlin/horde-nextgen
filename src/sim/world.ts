@@ -177,6 +177,25 @@ export interface BossState {
   skips: number;
 }
 
+/**
+ * The line the player's gun points along this tick, written once by `systems/weapons.ts`.
+ *
+ * It is the answer to "which way is the player actually shooting?", and one answer rather
+ * than two on purpose: the round takes this line and the render layer draws it, so a barrel
+ * cannot be drawn pointing somewhere its shots do not go. Auto-fire leads a body rather than
+ * following the steer, so this is not always `player.aimX/aimY`.
+ *
+ * Derived, per tick, and read-only downstream — which is why it is not in the save format or
+ * the fingerprint: nothing decides an outcome from it, and the same tick recomputes it.
+ */
+export interface MuzzleLine {
+  /** Unit direction of the line. */
+  x: number;
+  y: number;
+  /** Metres down the line a lobbed shot resolves, measured from the player. */
+  dist: number;
+}
+
 export interface World {
   readonly seed: number;
   rng: Rng;
@@ -229,6 +248,9 @@ export interface World {
   /** Pool slot of that closest enemy, -1 when there is none. Auto-fire leads its
    * shot at this body; `enemyNear` says how far away it is, this says where. */
   nearest: number;
+  /** The line this tick's shot takes — see `MuzzleLine`. Written by the weapon pass and
+   * read by the picture; a world that has not stepped yet points along its starting aim. */
+  muzzle: MuzzleLine;
   minX: number;
   minY: number;
   maxX: number;
@@ -367,6 +389,7 @@ export function createWorld(seed: number, opts: WorldOptions = {}): World {
     autoFire: false,
     enemyNear: Infinity,
     nearest: -1,
+    muzzle: { x: 1, y: 0, dist: 0 },
     minX,
     minY,
     maxX,

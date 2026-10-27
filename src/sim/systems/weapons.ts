@@ -156,9 +156,20 @@ function wantsFire(w: World, frame: InputFrame, def: WeaponDef): boolean {
 function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFrame): void {
   const charge = def.charge;
   const want = wantsFire(w, frame, def);
+  // Whether the line comes from auto-fire's lock rather than the player's steer. `want`
+  // already means "the trigger is down, or auto-fire is on and a body is inside this gun's
+  // reach", so anding it with an undrawn trigger says exactly "auto-fire is the one
+  // shooting" — which is also the only case where the two would disagree.
+  const auto = want && !frame.fire;
+
+  // Resolved once, before anything spends it: the round takes this line and the render
+  // layer turns the rig along it, so a barrel cannot be drawn pointing somewhere its shots
+  // do not go. Written on the quiet ticks too, which is what lets the muzzle keep tracking
+  // a body while a gun cycles between shots.
+  aimMuzzle(w, def, auto, frame.aimDist);
 
   if (!want) {
-    if (charge && slot.charge > 0) fire(w, slot, def, false, frame.aimDist);
+    if (charge && slot.charge > 0) fire(w, slot, def);
     slot.beam = 0;
     return;
   }
@@ -168,55 +179,35 @@ function decideFire(w: World, slot: WeaponSlot, def: WeaponDef, frame: InputFram
       slot.charge += DT;
       return;
     }
-    fire(w, slot, def, !frame.fire, frame.aimDist);
+    fire(w, slot, def);
     return;
   }
 
-  fire(w, slot, def, !frame.fire, frame.aimDist);
+  fire(w, slot, def);
 }
 
 /**
- * Fire one round, or one volley, from `slot` if the gun is able to.
+ * Write the tick's muzzle line into `w.muzzle`: the direction a round would take, and how
+ * far down it a lobbed one resolves.
  *
- * `auto` marks the trigger as auto-fire rather than a held button, and the two aim
- * differently on purpose: a held trigger fires where the player steered — the line, and
+ * `auto` picks who aims it. A steered shot goes where the player pointed — the line, and
  * for the two kinds that resolve at a landing point the distance too — while auto-fire
- * leads the nearest body. Auto-fire exists so the gun keeps working while the player is
- * busy moving, and a round fired along whatever the aim happened to be last almost never
- * finds the crowd closing in from every side, which would leave the setting looking
- * broken.
+ * leads the nearest body, because a round fired along whatever the aim happened to be last
+ * almost never finds the crowd closing in from every side, which would leave the setting
+ * looking broken.
  *
- * Leading matters most for a lobbed shell, which is why the `arc` branch does not
- * merely point at the nearest body — see the comment there. A singularity is pointed
- * and not led, for the opposite reason, also below.
+ * Leading matters most for a lobbed shell, which is why the `arc` branch does not merely
+ * point at the nearest body — see the comment there. A singularity is pointed and not led,
+ * for the opposite reason, also below.
  *
- * A shot that could not be created — the projectile pool is full — spends neither
- * ammo nor cooldown, so a jammed pool never quietly eats a round. The same goes for a
- * hand that cannot spend: venting, out of charge or out of ammo, it does not tick, and
- * a chain bolt that found nobody spends its charge too.
- *
- * The three paths added on top of a round aim differently. A beam and a bolt resolve
- * the tick they are called and need only a direction; a singularity is deliberately
- * *not* led, because it pops where it got to rather than where it was aimed, and its
- * job is to gather the crowd that is about to be there.
+ * One resolution rather than two — the shot reads what this writes — because the day the
+ * picture derives its own answer is the day they drift and the rig starts lying about where
+ * the gun is aimed.
  */
-function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean, aimDist: number): void {
-  const cost = def.energy ? def.energy.perShot : 0;
-  if (slot.reload > 0 || slot.cooldown > 0 || slot.venting) {
-    slot.beam = 0;
-    return;
-  }
-  if (def.ammo && slot.ammo <= 0) {
-    slot.beam = 0;
-    return;
-  }
-  if (cost > 0 && slot.energy < cost) {
-    slot.beam = 0;
-    return;
-  }
-
+function aimMuzzle(w: World, def: WeaponDef, auto: boolean, aimDist: number): void {
   const player = w.player;
   const enemies = w.enemies;
+  const line = w.muzzle;
   const muzzle = TUNE.playerRadius + TUNE.shotStart;
   let ax = player.aimX;
   let ay = player.aimY;
@@ -257,8 +248,10 @@ function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean, aimDist
     }
     const len = Math.sqrt(lx * lx + ly * ly);
     if (len > EPS) {
-      ax = lx / len;
-      ay = ly / len;
+      line.x = lx / len;
+      line.y = ly / len;
+      line.dist = lob;
+      return;
     }
   } else {
     const aimLen = Math.sqrt(ax * ax + ay * ay);
@@ -286,6 +279,49 @@ function fire(w: World, slot: WeaponSlot, def: WeaponDef, auto: boolean, aimDist
       lob = reach > def.range ? def.range : reach < LOB_MIN ? LOB_MIN : reach;
     }
   }
+
+  line.x = ax;
+  line.y = ay;
+  line.dist = lob;
+}
+
+/**
+ * Fire one round, or one volley, from `slot` if the hand is able to.
+ *
+ * The line comes out of `w.muzzle`, written this same tick by `aimMuzzle` — see there for
+ * who aims it and why the two ways differ.
+ *
+ * A shot that could not be created — the projectile pool is full — spends neither
+ * ammo nor cooldown, so a jammed pool never quietly eats a round. The same goes for a
+ * hand that cannot spend: venting, out of charge or out of ammo, it does not tick, and
+ * a chain bolt that found nobody spends its charge too.
+ *
+ * The three paths added on top of a round aim differently. A beam and a bolt resolve
+ * the tick they are called and need only a direction; a singularity is deliberately
+ * *not* led, because it pops where it got to rather than where it was aimed, and its
+ * job is to gather the crowd that is about to be there.
+ */
+function fire(w: World, slot: WeaponSlot, def: WeaponDef): void {
+  const cost = def.energy ? def.energy.perShot : 0;
+  if (slot.reload > 0 || slot.cooldown > 0 || slot.venting) {
+    slot.beam = 0;
+    return;
+  }
+  if (def.ammo && slot.ammo <= 0) {
+    slot.beam = 0;
+    return;
+  }
+  if (cost > 0 && slot.energy < cost) {
+    slot.beam = 0;
+    return;
+  }
+
+  const player = w.player;
+  const muzzle = TUNE.playerRadius + TUNE.shotStart;
+  const line = w.muzzle;
+  const ax = line.x;
+  const ay = line.y;
+  const lob = line.dist;
 
   // The draw sets how hard and how flat the shot leaves, so it is resolved here
   // rather than per target: one draw, one number, every body it reaches.
