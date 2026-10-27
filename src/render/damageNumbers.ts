@@ -25,10 +25,19 @@
  * forty hits it swallowed. Hence a pool that can hold a volley and the sweep after it, and a merge
  * that folds up one event rather than one neighbourhood.
  *
+ * The plate is what makes them readable. Every number sits on a dark Void tab at DESIGN.md's
+ * panel alpha with a 1px hairline around it, and that tab replaces the `text-shadow` blur this
+ * layer used to carry. Two reasons for the swap. The brief keeps CSS glow and blur stacks off the
+ * playfield ("Avoid"), and a blur is not separation over a bloomed explosion anyway — the shadow
+ * is the same dark as the halo it is meant to escape. A plate is separation, because it holds its
+ * contrast whether the floor behind it is a fireball or unlit concrete, and it costs the
+ * compositor a small quad instead of a blur pass.
+ *
  * The styling is inline rather than a class in `src/ui/styles.css` because this file lives on the
  * render side of the render/ui line and must not reach across it for a stylesheet (ARCHITECTURE.md
  * "Hard rules"): one element, two colours and two sizes is not worth a dependency between the
- * layers.
+ * layers. It is written once per slot when the pool is built, so a busy frame still spends one
+ * transform and one opacity per live number, plate or no plate.
  *
  * Like the rest of `render`, this is optional and guarded: with no host element — a headless run,
  * a unit test, a page without an overlay — it builds a layer that does nothing but count.
@@ -94,6 +103,29 @@ const FADE_OUT = 0.18;
 
 /** Where a number's text stops being worth redrawing, in HP. */
 const MERGE_LIMIT = 9999;
+
+/**
+ * The plate's fill: Void at the alpha DESIGN.md gives a UI panel (`#0B0D14` at 72%).
+ *
+ * Not fully opaque, because a plate that hides the floor hides the thing the number is about: a
+ * merge over a chokepoint still has to show the bodies it counted. At 72% the brightest thing a
+ * number ever sits on — a white-hot bloom core behind the tab — still leaves better than 5:1
+ * between the glyphs and the tab's own fill.
+ */
+const PLATE = 'rgba(11,13,20,0.72)';
+
+/**
+ * The plate's hairline: Alien Cyan, the palette's UI hairline, at a quarter of its strength.
+ *
+ * The line is not decoration. Over unlit concrete the fill alone has almost no contrast with the
+ * floor, so the tab's edge — and with it the question "is this one number or three" — would go
+ * with it. One colour for every tab, deliberately: the crit is already bigger and Hazard yellow,
+ * and a rim that only changes hue says nothing a person can read off a moving crowd.
+ */
+const HAIRLINE = 'rgba(46,242,255,0.28)';
+
+/** The plate's box: 1px of line, 3px of air, 2px of rounding. Written once per slot, never per frame. */
+const PLATE_CSS = `padding:1px 3px;background:${PLATE};border:1px solid ${HAIRLINE};border-radius:2px;`;
 
 /** The layer's state, one slot per number. Fixed-size, and never reallocated. */
 export interface NumberPool {
@@ -291,9 +323,11 @@ export function createNumbers(
       'font:600 14px/1 "IBM Plex Mono",ui-monospace,monospace;';
     for (let i = 0; i < pool.cap; i++) {
       const node = document.createElement('span');
+      // The plate belongs to the slot, not to the number: written once here, so the frame a hit
+      // lands still spends one transform and one opacity. Rounding rather than DESIGN.md's cut
+      // corners, which would want a `clip-path` per tab to take 2 px off a corner.
       node.style.cssText =
-        'position:absolute;left:0;top:0;display:none;will-change:transform,opacity;' +
-        'text-shadow:0 1px 2px rgba(0,0,0,.85);';
+        'position:absolute;left:0;top:0;display:none;will-change:transform,opacity;' + PLATE_CSS;
       root.appendChild(node);
       nodes.push(node);
     }
@@ -369,8 +403,12 @@ export function createNumbers(
         }
         // One transform write per live number, and the rise is part of it: the height is already
         // in the projection, so the number leaves the floor as a projected point rather than as a
-        // CSS slide that would drift off the thing it belongs to.
-        node.style.transform = `translate(${left.toFixed(1)}px,${top.toFixed(1)}px) scale(${(1 + age * 0.1).toFixed(2)})`;
+        // CSS slide that would drift off the thing it belongs to. The second translate hangs the
+        // tab from its own middle, which is what keeps a four-digit merge over the body it came
+        // from instead of sliding away to the right as it grows.
+        node.style.transform =
+          `translate(${left.toFixed(1)}px,${top.toFixed(1)}px) translate(-50%,-50%)` +
+          ` scale(${(1 + age * 0.1).toFixed(2)})`;
       }
     },
   };

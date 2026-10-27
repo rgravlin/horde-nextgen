@@ -266,6 +266,42 @@
         "wait": 500
       },
       {
+        "press": "1"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 400
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 300
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 300
+      },
+      {
+        "press": "1"
+      },
+      {
+        "wait": 300
+      },
+      {
         "state": {
           "mode": "==arena",
           "scene": "==playing",

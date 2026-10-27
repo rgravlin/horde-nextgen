@@ -77,6 +77,18 @@ function withFakePage<T>(run: () => T): T {
   }
 }
 
+/**
+ * The plate's fill, read back out of the inline style, or null when the number has no plate.
+ *
+ * Read rather than compared to the literal the layer writes, so the test says what the plate has
+ * to be — dark, translucent — and fails if it stops being either.
+ */
+function plateFill(css: string): [number, number, number, number] | null {
+  const found = /background:rgba\(([\d.]+),([\d.]+),([\d.]+),([\d.]+)\)/.exec(css);
+  if (found === null) return null;
+  return [Number(found[1]), Number(found[2]), Number(found[3]), Number(found[4])];
+}
+
 /** The game's own rig (TECH.md "Camera"): 40° FOV, 55° pitch, 22 m out, over a 16:9 page. */
 function rig(): PerspectiveCamera {
   const camera = new PerspectiveCamera(40, 16 / 9, 0.5, 220);
@@ -285,6 +297,37 @@ describe('the layer', () => {
     expect(painted.every((node) => node.style.transform.includes('px'))).toBe(true);
     expect(layer.pool.count).toBe(20);
     expect(layer.pool.dropped).toBe(0);
+  });
+
+  it('hangs every number on a dark plate rather than a blur', () => {
+    // Legibility, pinned where it can be checked. DESIGN.md keeps CSS glow and blur stacks off the
+    // playfield, so what separates a number from a bloomed explosion or an acid pool is a dark tab
+    // behind it, not a shadow — and a screenshot of a frozen frame cannot tell either way, which
+    // is why this reads the styles back off the fake page.
+    const host = new FakeNode();
+    const world = createWorld(0xd0de, { arenaHalf: 60, eventCap: 1024 });
+    for (const [x, y] of spread(20, MERGE_RADIUS * 2.2)) pushEvent(world, Ev.Damage, 11, 0, x, y);
+
+    const layer = withFakePage(() => {
+      const built = createNumbers(host as unknown as HTMLElement);
+      built.tick(world, STEP, rig(), 1280, 720);
+      return built;
+    });
+
+    const painted = host.children[0]!.children.filter((node) => node.style.display === 'block');
+    expect(painted.length).toBe(20);
+    expect(layer.pool.count).toBe(20);
+
+    // Dark, so light glyphs stay light, and not fully opaque, so the floor the number is about
+    // still shows through it.
+    const fills = painted.map((node) => plateFill(node.style.cssText));
+    expect(fills.every((fill) => fill !== null), 'a number reached the screen with no plate').toBe(true);
+    expect(fills.every((f) => Math.max(f![0], f![1], f![2]) < 64 && f![3] > 0.5 && f![3] < 1)).toBe(true);
+    // The blur the plate replaces, and the one DESIGN.md forbids over the playfield.
+    expect(painted.every((node) => !node.style.cssText.includes('text-shadow'))).toBe(true);
+    // And the tab hangs from the point the hit landed at, so a long merge grows over its own body
+    // instead of sliding away to the right as it grows.
+    expect(painted.every((node) => node.style.transform.includes('translate(-50%,-50%)'))).toBe(true);
   });
 
   it('reads the ring through its own cursor and never rewinds it', () => {

@@ -89,7 +89,7 @@ At most two families, both self-hosted with `forge-fetch font "Chakra Petch"` an
 - **Screen shake:** trauma-based (shake = trauma²), capped and adjustable in settings, defaulting to 70%. Small for gunfire, large for explosions and boss slams.
 - **Telegraphs:** at least 400 ms of wind-up before every charge, shot or lob. The enemy flashes Threat Red, then a charge line or landing ring appears on the ground and fills up until impact. Snipers draw a thin laser sight.
 - **Dash:** a short afterimage trail in Alien Cyan, and the player is semi-transparent during the i-frames.
-- **Damage numbers:** they float up 0.6 m and fade over 600 ms. Crits are larger and Hazard yellow. Numbers merge under a heavy horde so they never pile up into clutter.
+- **Damage numbers:** they float up 0.6 m and fade over 600 ms, centred on the point they came from. Crits are larger and Hazard yellow. Each one sits on a dark Void plate (72% alpha, 1px Alien Cyan hairline) instead of a text shadow — that is how they stay readable over bloom without breaking the no-blur rule below. Numbers merge under a heavy horde so they never pile up into clutter.
 
 ## Avoid
 - pixel art
