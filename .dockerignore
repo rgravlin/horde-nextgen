@@ -1,0 +1,29 @@
+# Build context hygiene: the prod image needs package*.json, index.html, src/,
+# public/, docker/nginx.conf and the three config files. Nothing else.
+
+# Would shadow the Linux node_modules the build stage installs.
+node_modules/
+dist/
+
+# Never part of a bundle or a build.
+.git/
+.gitignore
+.forge-review/
+test-results/
+playwright-report/
+coverage/
+*.tsbuildinfo
+.DS_Store
+*.log
+
+# Docs, tests and tools are 8 MB of things nginx never serves. The compose
+# `checks` service bind-mounts the repo instead, so it still sees tests/.
+docs/
+tests/
+tools/
+forge-scenarios.json
+
+# Docker's own inputs, so editing them does not bust the dependency layer.
+Dockerfile
+docker-compose.yml
+.dockerignore

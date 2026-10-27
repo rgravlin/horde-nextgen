@@ -55,6 +55,27 @@ so `npm run dev` in another terminal does not collide with it. Chromium runs on 
 software rasteriser: the scenarios check what the game *does*, never how fast it draws — see
 the next section for why, and for where the speed numbers do come from.
 
+### Docker
+
+Nothing here needs Docker — `npm run dev` on the host is the shorter path. It is for a
+reproducible toolchain: `Dockerfile` builds the bundle and nginx serves it, `docker-compose.yml`
+wraps that plus the dev server and a one-shot checks runner.
+
+    docker compose up dev         # vite in a container -> http://127.0.0.1:5173
+    docker compose up web         # builds the image -> http://127.0.0.1:8080
+    docker compose --profile checks run --rm checks   # typecheck + unit tests + bench
+
+Open the published port in a browser on the host. The container runs the *rules*, the browser
+does the drawing, and a container has no GPU — so a container run exercises the code, never a
+real renderer. Treat it as CI with a port, not as a way to judge how the game looks.
+
+Two details in `docker-compose.yml` that are easy to break: `--host 0.0.0.0` is overriding
+`server.host: '127.0.0.1'` in `vite.config.ts`, because a server bound to a container's own
+loopback is unreachable through `-p`; and `node_modules` is a named volume, so Linux package
+binaries never land in a macOS `node_modules` or the other way round. Reset it with
+`docker volume rm horde-nextgen_node_modules`. Playwright scenarios do not run in Docker yet —
+they need the Chromium image, see the note at the bottom of `docker-compose.yml`.
+
 ### Bench mode (in the browser)
 
 The page has the other half of the same measurement. `npm run bench` times one tick of the

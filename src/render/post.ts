@@ -31,7 +31,7 @@ import {
   type UniformNode,
   type WebGPURenderer,
 } from 'three/webgpu';
-import { pass, add, float, uniform } from 'three/tsl';
+import { pass, add, float, uniform, vec2 } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { chromaticAberration } from 'three/addons/tsl/display/ChromaticAberrationNode.js';
 
@@ -108,7 +108,9 @@ export function createPost(
         // scale is a `float()` node for the opposite reason — it never changes, and the
         // function's own signature takes a node there rather than a number.
         strength = uniform(base);
-        node = chromaticAberration(node, strength, null, float(CHROMA_SCALE));
+        // The center must be a node: three's shader takes it as a vec2 input, and `null` (the
+        // factory's own default) fails to compile, which blacked out the whole frame on a real GPU.
+        node = chromaticAberration(node, strength, vec2(0.5, 0.5), float(CHROMA_SCALE));
       }
 
       pipeline = new RenderPipeline(renderer, node);

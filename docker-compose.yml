@@ -1,0 +1,68 @@
+name: horde-nextgen
+
+# Three ways to use Docker with this repo. Dev and checks bind-mount the repo and
+# keep node_modules in a named volume, so the container's Linux/arm64 binaries
+# never land in your macOS node_modules (and vice versa).
+#
+#   docker compose up dev      # vite on http://127.0.0.1:5173 — open that in a host browser
+#   docker compose up web      # builds the image, nginx on http://127.0.0.1:8080
+#   docker compose --profile checks run --rm checks   # typecheck + unit tests + bench
+#
+# Reset a stale dependency volume: docker compose down && docker volume rm horde-nextgen_node_modules
+
+services:
+  dev:
+    image: node:22-alpine
+    working_dir: /app
+    # `--host 0.0.0.0` is required, not cosmetic: vite.config.ts pins
+    # server.host = 127.0.0.1, which is correct on the host and unreachable when
+    # it is a container's loopback. The CLI flag overrides the config per-run.
+    #
+    # Hot reload over a macOS bind mount can go quiet. If it does, add
+    # watch: { usePolling: true } to server in vite.config.ts (Vite has no CLI
+    # flag for it, and no env var to set).
+    command: sh -c "npm ci --no-audit --no-fund && exec npx vite --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - npm_cache:/root/.npm
+    restart: unless-stopped
+
+  # The thing you would ship: multi-stage build, nginx serving dist/. Independent
+  # of dev — start one, the other, or both with `docker compose up`.
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: serve
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  # Deliberately separate from `up`: one-shot, exits 1 on the first failure.
+  # `npm test` is the vitest suite (no DOM, so no browser needed here).
+  checks:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run bench"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - npm_cache:/root/.npm
+    profiles: ["checks"]
+    restart: "no"
+
+  # E2E is NOT wired up: playwright.config.ts wants Chromium + SwiftShader, which
+  # means the Playwright image (~300 MB) and `npx playwright install chromium`.
+  # Sketch, untested:
+  #   image: mcr.microsoft.com/playwright:v1.48.2-noble
+  #   working_dir: /app
+  #   command: sh -c "npm ci && npm run test:e2e"
+  # Browser and vite server in one container, so playwright's 127.0.0.1 probe
+  # still works; that is also why this service needs no --host override.
+
+volumes:
+  node_modules:
+  npm_cache:
