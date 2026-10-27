@@ -12,7 +12,8 @@ lives there, as plain TypeScript with **no imports from `three`, the DOM, `windo
 written twice:
 
 - the browser, wired by `src/main.ts`;
-- Node, headless — vitest unit tests, `tools/bench.ts`, `tools/replay.ts`.
+- Node, headless — vitest unit tests and `tools/bench.ts` (the only thing under `tools/`). Replay is a
+  sim module, `src/sim/replay.ts`, exercised by `tests/unit/serialize.test.ts`; there is no replay command.
 
 There is no server and no worker today. The seam is kept anyway: `step(world, frame)` takes a `World` plus one
 `InputFrame`, mutates pooled arrays in place and appends to event rings. Moving the sim to a Worker later would be a
@@ -44,17 +45,18 @@ npm run bench       # tsx tools/bench.ts (sim perf gate)
 ```
 
 Root config files: `tsconfig.json` (strict, `moduleResolution: "bundler"`), `vite.config.ts`, `vitest.config.ts`
-(include `tests/unit/**/*.test.ts`, `environment: "node"`), `playwright.config.ts`. Assets live in
-`public/assets/` with sources and licences recorded in `ASSETS.md`; README.md keeps the run instructions and the
-"add a weapon / enemy / level / model" recipes, and content additions are one data entry plus a mesh or behaviour
-only when genuinely new.
+(include `tests/unit/**/*.test.ts`, `environment: "node"`), `playwright.config.ts`. Streamed assets live in
+`public/models/`, `public/textures/` and `public/hdri/` (served from the site root) with sources and licences
+recorded in `ASSETS.md`; README.md keeps the run instructions and the "add a weapon / enemy / level / model" recipes,
+and content additions are one data entry plus a mesh or behaviour only when genuinely new.
 
 ## Invariants
 
 1. Fixed 1/60 Hz sim, at most 5 steps per frame; rendering interpolates and never scales gameplay by raw frame time.
 2. No per-tick allocation: no closures, `.map`/`.filter`, or new objects inside `step`. Pools with the caps in
-   `config.ts` (enemies 2048, projectiles 2048, enemy projectiles 512, shards 1024, particles 16k, damage numbers
-   64, lights 16).
+   `src/sim/constants.ts` (enemies 2048, projectiles 2048, enemy projectiles 512, shards 1024) and `src/sim/fx.ts`
+   (the particle ring holds 8192). Render-side: four palette batches of the tier's `particles` budget each
+   (512/1024/2048/4096), damage numbers 64, pooled lamps 0/8/16/16 — all keyed off `src/render/quality.ts`.
 3. Determinism: same seed + same input log → same `hashWorld(world)` (FNV-1a over the pools).
 4. GPU paths (compute particles, bloom, shadows) are cosmetic. If a GPU call fails, fall back to the CPU path;
    gameplay and the HUD must be unaffected.

@@ -334,7 +334,9 @@ export async function loadAssets(
   const tiles = Math.max(1, Math.round(floorSize / FLOOR_TILE));
   const loader = new TextureLoader();
 
-  // All six files at once: the wait is one round trip, and the whole room costs about 250 KB.
+  // All nine files at once rather than in sequence: the wait is one concurrent fetch, and the
+  // whole room is about 3.2 MB, half of it the HDRI. Measured, because the budget a comment
+  // states is the budget someone plans against.
   const [diff, normal, rough, kit, env, ...models] = await Promise.all([
     loadMap(loader, 'concrete_floor_02_diff_1k.jpg', missing, true, tiles, aniso),
     loadMap(loader, 'concrete_floor_02_nor_gl_1k.jpg', missing, false, tiles, aniso),

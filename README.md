@@ -4,8 +4,36 @@ Neon Horde: a top-down twin-stick "horde" survival shooter on three.js r186
 (`WebGPURenderer`, WebGPU first with an automatic WebGL2 fallback), driven by a
 deterministic 60 Hz simulation in plain TypeScript.
 
-Requirements: Node >= 22 (the sandbox runs 22.11.0) and `npm install` once with
-network access — everything after that runs offline.
+You drop onto a night-time factory floor with a pistol and a dozen rounds, the waves come in
+from every edge of the screen and keep coming, and the run is about which lanes you can cut
+and where you stand while you cut them. Everything glows, the threat is numbers, and each kill
+is a short bright pop: XP shards stream into you, a level-up freezes the fight for a
+pick-of-three card screen, chests drop at hot spots, and every chapter ends in a boss.
+
+What is in it: 18 weapons across the three families (guns, medieval, alien tech) over seven
+delivery paths — projectile, hitscan, the melee sweep, the lobbed arc shell, the continuous
+beam, the jumping chain bolt and the drifting orb — 19 enemy archetypes running on 17
+movement/attack behaviours, 30 power-ups, ten chapters with their own floor plans, wave
+scripts and bosses, and an endless arena once the last chapter is cleared. A run saves and
+resumes, on demand or every 30 seconds of play.
+
+The rules live in `src/sim` + `src/content` as plain TypeScript with no DOM, canvas or timers,
+so the identical code runs in the browser and headless in Node — which is where the unit tests
+and the performance gate drive it from. `src/render`, `src/audio` and `src/ui` only *read* that
+state; nothing outside `src/sim` decides what happens in a fight.
+
+## Set-up
+
+Requirements: Node >= 22 (the sandbox runs 22.11.0), a WebGL2-or-better browser, and network
+access once, for the install:
+
+    npm install         # once, online; everything after that runs offline
+
+That installs three.js 0.186.1 plus the two self-hosted fonts (the only runtime dependencies),
+and Vite, TypeScript, Vitest, tsx and Playwright as dev tools — see [TECH.md](TECH.md) for the
+pinned versions and why they were chosen over Babylon, PlayCanvas and raw WebGPU. Chromium for
+the browser scenarios comes from `/ms-playwright` (see `playwright.config.ts`); on a fresh
+machine that is `npx playwright install chromium`.
 
 ## Commands
 
@@ -20,6 +48,12 @@ Run them in the repo root:
 
 `npm run typecheck`, `npm test` and `npm run build` are the checks every change
 has to leave green.
+
+`npm run test:e2e` starts its own Vite server on port 5173 and reuses one that is already up,
+so `npm run dev` in another terminal does not collide with it. Chromium runs on SwiftShader
+(`--enable-unsafe-webgpu --use-angle=swiftshader --enable-unsafe-swiftshader`), which is a
+software rasteriser: the scenarios check what the game *does*, never how fast it draws — see
+the next section for why, and for where the speed numbers do come from.
 
 ### Bench mode (in the browser)
 
@@ -44,13 +78,139 @@ Nothing in the browser is gated on speed, deliberately: the CI box has no GPU, s
 frame-time threshold there would be a test of SwiftShader rather than of the game. The gate
 lives in `npm run bench`, where 4 ms a step is measured with no GPU in the way.
 
+### The gate, and what a bench run means
+
+`npm run bench` (`tsx tools/bench.ts`) is the only performance *check*. It builds the headline
+load — 1,000 bodies, 1,500 rounds in the air, 8,000 particles, 600 XP shards and 16 lights —
+re-seeds it before every measured tick and times 600 ticks after 60 warm-up ones, so the load
+does not drain while it is being measured. The gate is the **median step: over 4 ms the
+process exits 1**, which is what stops a change that makes a tick slower from landing quietly.
+It runs on chapter 10's floor by default, because cover is what makes a horde expensive — every
+body asks the prop grid one or two questions a tick — and it prints the worst low-water mark of
+what survived a tick, so a window that quietly emptied says so instead of printing a nice
+number.
+
+    npm run bench                                  # the gate: ≤4 ms a step at 1,000 bodies
+    npm run bench -- --enemies=2000                # same gate near the 2,048-body pool ceiling
+    npm run bench -- --floor=0                     # chapter 1's floor, to match a default ?bench= window
+    npm run bench -- --floor=none --ticks=1200     # open arena, longer window
+    npm run bench -- --budget=3                    # tighten the gate
+    npm run bench -- --out=/tmp/bench.json         # keep the numbers
+
+The flags are `--ticks`, `--budget`, `--floor` (a 0-based chapter index — `--floor=9` is the
+default and names chapter 10, `none` is open arena), `--enemies`,
+`--shots`, `--particles` and `--out`. A `?bench=1000` window and a default `npm run bench` are
+the same pile of load on different floors — the browser starts on chapter 1, the headless run on
+chapter 10 — so say which one you measured when you quote a number.
+
+To read a browser run on real hardware, measure a built bundle rather than the dev server (a dev
+server ships unbundled modules and pays for the transform) and compare three numbers rather than
+one: the headless `ms/step`, the report's `workMs` (the code inside a frame) and its `frameMs` /
+`fps`.
+
+    npm run build
+    npx vite preview --port 4173 --strictPort      # http://127.0.0.1:4173
+
+    # then, in a browser with a real GPU:
+    #   http://127.0.0.1:4173/?bench=1000                  the headline load
+    #   http://127.0.0.1:4173/?bench=2000&seconds=10        near the pool ceiling
+    #   http://127.0.0.1:4173/?bench=1000&gl=webgl2         the fallback path, same load
+    #   http://127.0.0.1:4173/?bench=1000&chapter=10        the floor the headless gate measures
+
+The split is the point. The rig was written on a machine where a thousand bodies cost about
+6 ms of JS inside a 230 ms frame, and a report that only printed "15 fps" would have pointed at
+the simulation while the milliseconds went to the draw path or to how the browser paces
+`requestAnimationFrame`. `workMs` against `frameMs` is what tells you which file to open; a
+2,000-body window is a load to measure against, not a claim about what the game plays like.
+
+## Graphics: backends, quality tiers and the WebGL2 pass
+
+**Backend.** One renderer covers both paths. It comes up on WebGPU when the browser has
+`navigator.gpu`, and on three's WebGL2 backend when it does not — that switch is three's, not the
+game's. `?gl=webgl2` forces the WebGL2 path on a machine that has WebGPU, which is how both paths
+get exercised: it is a URL knob only (`readParams` in `src/main.ts`), so switching means reloading
+the page, and there is no Settings row for it. `__forgeState().backend` answers `"webgpu"`,
+`"webgl2"` or `"none"`, and `"none"` means neither came up: the page then shows an HTML "your
+browser can't run this (needs WebGL2)" panel instead of a canvas, and the simulation keeps running
+behind it with no view. `tests/e2e/slice.spec.ts` runs the scenario twice, once per backend, and
+the second pass asserts `backend === "webgl2"`.
+
+**Compute particles** take the same split. The GPU path needs the compute-capable backend, so
+WebGPU gets `Fn().compute(n)` dispatched through `renderer.compute()` and WebGL2 gets the
+CPU-updated instanced field (`particleMode` in `src/render/renderer.ts`). Both draw the same four
+palette batches; gameplay never reads either, which is the invariant every tier knob sits on.
+
+**Tiers.** The four tiers are one table, `PROFILES` in `src/render/quality.ts`, and one function
+reads the machine and picks one, `pickTier`:
+
+| tier | shadows | particle budget (×4 palettes) | point lights | bloom (+ chromatic punch) | render scale |
+|---|---|---|---|---|---|
+| Low | off | 512 | 0 (emissive only) | off | 0.75× |
+| Medium | 1024 px | 1,024 | 8 | on (0.40) | 1× |
+| High | 2048 px | 2,048 | 16 | on (0.62) | 1× |
+| Ultra | 4096 px | 4,096 | 16 | on (0.72) | 1× |
+
+**Auto-detect** runs once at boot, from the backend, the GPU's own name, the device kind and
+`navigator.deviceMemory`: a tier named in Settings wins outright; a software rasteriser
+(SwiftShader, llvmpipe) goes to Low; a named WebGPU adapter starts at High and everything else
+(WebGPU that will not identify itself, either WebGL2 case) at Medium; a handheld never starts
+above Medium; 4 GiB or less is Low and 8 GiB is capped at Medium. Ultra is not reachable by
+auto-detect — it needs WebGPU, a named adapter, a machine that says it is a desktop and at least
+16 GiB, four pieces of evidence rather than an assumption. A machine that cannot say what it is
+does not get assumed to be the weak one; it just does not get the top tier.
+
+**Settings** only ever subtract, and the Video tab is where they are: `quality`
+(`auto` → `low` → `medium` → `high` → `ultra`), `resolution` (50–100%, six stops, under the
+tier's own ceiling), `shadows`, `bloom + chromatic` (the punch travels with the bloom pass rather
+than having its own row) and `particles` (`off` / `low` / `medium` / `full`, as a fraction of the
+tier's budget). A tier is the ceiling: `shadows: on` under Low buys nothing, because the tier's
+answer is the cap and the setting sits under it. Rows are click-to-cycle buttons; the panel also
+holds the mute, gunfire and music dials, the damage-number toggle, auto-fire and screen shake.
+Everything else worth knowing about the look — palette, typography, the camera rig, what Threat
+Red is reserved for — is in DESIGN.md.
+
 ## Where things live
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the modules, the data flow and where tests
 belong; [TECH.md](TECH.md) the pinned engine versions and why they were chosen;
-[DESIGN.md](DESIGN.md) the look. The "Adding content" section below is how to add a
-weapon, an enemy or a power-up; `ARCHITECTURE.md` has the rules a new piece of
-content has to follow.
+[DESIGN.md](DESIGN.md) the look; [ASSETS.md](ASSETS.md) every streamed file with its
+source and licence. The "Adding content" section below has the recipes: a weapon, an
+enemy, a power-up, a level, a model and a song; `ARCHITECTURE.md` has the rules a new
+piece of content has to follow.
+
+Assets are fetched, not generated: `public/models/` (the Kenney City Kit Industrial
+glTF cover), `public/textures/` (the wet-concrete floor) and `public/hdri/` (the
+environment map), served verbatim from the site root. Adding one means a row in
+`ASSETS.md` — see "Adding a model" below.
+
+## Assets and licences
+
+Everything streamed is CC0 and every file is listed with its source, licence and author in
+[ASSETS.md](ASSETS.md); this is only what the game does with it. `public/` weighs about 6.5 MB,
+of which a page fetches about 3.2 MB at boot (half of that the HDRI).
+
+| what | where | what it is used for |
+|---|---|---|
+| Kenney City Kit Industrial — 37 GLBs + their shared `Textures/colormap.png`, CC0 | `public/models/kenney-industrial/` | the four cover modules in `PROP_MODEL` (`src/render/assets.ts`), one instanced layer per look, repeated rather than stretched |
+| Poly Haven `concrete_floor_02` — six 1k maps, CC0, Rob Tuytel | `public/textures/concrete_floor_02/` | the wet-concrete floor; three of the six are fetched (`diff`, `nor_gl`, `rough`), the rest are kept with the set |
+| Poly Haven `autoshop_01_1k.hdr`, CC0, Oliksiy Yakovlyev | `public/hdri/` | reflections and IBL only, never a visible backdrop (DESIGN.md) |
+| Chakra Petch and IBM Plex Mono, OFL-1.1 | `@fontsource/*` in `node_modules`, imported by `src/main.ts` | the two type families; pinned in `package.json` rather than listed in `ASSETS.md` because they arrive through npm |
+
+Three rules that come with them:
+
+- **One kit.** The industrial pack is the only set-dressing source, so cover reads as one place.
+  A second kit needs a reason stronger than variety — DESIGN.md's "Avoid" list names mixing packs
+  with clashing styles.
+- **`Textures/colormap.png` stays beside the GLBs.** Each `.glb` references it relatively, and the
+  one-material merge in `toModule()` depends on that. A piece with its own texture wants its own
+  material and its own layer, which is a different change than adding a module.
+- **Nothing licensed is unrecorded, and nothing recorded is unused without a reason.** Enemies,
+  projectiles, FX and all audio are procedural (DESIGN.md "Not sourced"); the three unused floor
+  maps are kept next to the three that are fetched because the set came as one download.
+
+Adding a file means: put it under `public/`, point at it from `src/render/assets.ts`, add its row
+to `ASSETS.md`, and keep the fetch optional — a missing file has to fall back and be counted, the
+way the four modules and three maps and the HDRI already do. See "Adding a model".
 
 ## Controls
 
@@ -67,14 +227,23 @@ run and a recorded replay all drive the same simulation code.
 | fire | left button — auto-fire is on by default, which is what the setting switches off |
 | dash | `Space` or either `Shift` |
 | swap hands | `Q`, or the mouse wheel |
+| start / confirm / take the highlighted card | `Enter` |
 | take a level-up card | `1` `2` `3`, or click the card |
 | reroll the offer | `R` |
-| pause | `Esc` or `P` |
-| debug overlay | `F3` |
+| pause / resume | `Esc` or `P` |
 
-Keys are rebappable in the settings screen's Controls tab. The table lives in
-`src/input/bindings.ts` and both the sampler and that tab read it, so a remap is real on the next
-key press.
+Behind those rows are thirteen bindable actions — four move keys plus fire, dash, swap hands, reroll, pause, accept and the three card keys — listed once in `src/input/bindings.ts`, which is the one table both
+the sampler and the settings screen's Controls tab read — so a remap is real on the next key
+press, not on the next reload. Keys are physical `KeyboardEvent.code` values (`'KeyW'`,
+`'Space'`, `'Mouse0'`), which is why the defaults still work on AZERTY and with Caps Lock on, and
+why a mouse button can be bound too. To rebind: Settings → Controls, click a row (it prints
+`press a key`), then press the key; a second click on the waiting row, or `Esc`, cancels, and
+**Reset keys** puts the whole map back. A key taken off one action is taken off it everywhere, so
+no two rows can end up sharing one. The gamepad is deliberately not in that list — see below.
+
+The screen also answers to the mouse: the menu stacks, the chapter grid and the three level-up
+cards are clickable, and Playwright drives them through `data-scene` / `data-action` attributes
+rather than pixel positions.
 
 ### Gamepad
 
@@ -117,13 +286,15 @@ Three versioned JSON keys in `localStorage`, all under the app's own name:
 | key | what it holds |
 |---|---|
 | `neonhorde.save.v1` | the run you can come back to: seed, chapter, tick, wave clock, the player, both weapon hands, power-ups, score and kills, plus the floors and the pools byte for byte |
-| `neonhorde.settings.v1` | volumes, quality tier, resolution scale, auto-fire and shake. Read today, written when the settings screen lands |
+| `neonhorde.settings.v1` | volumes and the mute, quality tier, resolution scale, shadows, bloom, particles, damage numbers, auto-fire, screen shake and the key map. Read at boot and rewritten the moment a Settings row changes, so what the panel shows and what a reload reads are one thing |
 | `neonhorde.meta.v1` | unlocked chapters, best time per chapter, whether the Endless Arena is unlocked, and the last 50 runs for the history screen |
 
 A run is written every 30 seconds of *play* — a pause or a level-up freeze holds that clock
 still, so time spent reading the pause menu costs nothing — at the end of every chapter, and
 whenever you ask for it. It is cleared as soon as a run is over, dead or won: a slot only ever
-holds something you could actually resume.
+holds something you could actually resume. A malformed or future-shaped file is not a crash:
+bad fields fall back to defaults and the fact is reported through the problem sink, which lands in
+`__forgeState().errors`.
 
 To reach it: `Esc` pauses, and the pause panel offers **Save run** and **Load saved run**. The
 title screen shows **Continue** while a save is waiting and puts that run back at the tick and
@@ -140,9 +311,11 @@ pause-screen Load) and the `save` scenario in `forge-scenarios.json`.
 
 Content is data: one entry in one file under `src/content`, which `src/sim` reads. A new
 weapon, enemy or power-up is not a new branch in the code. A new *behaviour* is one
-function in a dispatch table. The fields below are what the simulation reads today.
+function in a dispatch table, and a new *look* is either a procedural recipe or a streamed
+CC0 file (see "Adding a model"). The fields below are what the simulation reads today, and
+every recipe ends with the check that fails without it.
 
-### A weapon — `src/content/weapons.ts`, read by `src/sim/systems/weapons.ts`
+### Adding a weapon — `src/content/weapons.ts`, read by `src/sim/systems/weapons.ts`
 
 Add a `WeaponDef`.
 
@@ -189,17 +362,33 @@ whole flight behind the crowd it was fired at. A singularity is pointed, not led
 where it arrives, so chasing a body that has not got there yet spends the flight on empty
 floor.
 
-To hand a weapon to the player: `loadSlot(world.slots[1], i)` — one call that fills the
-magazine, the charge and the gauge state, which is what the unit tests and
-`__forgeDebug.giveWeapon(id)` both use (a swap refuses an empty hand).
-`tests/e2e/weapons-a.spec.ts` and `tests/e2e/weapons-b.spec.ts` are where the grant path
-is pinned — the first the gun, medieval and instant kinds, the second the alien ones plus
-the two gauges, read back through `__forgeState()` as `heat` / `venting` / `energy` per
-hand — because `forge-scenarios.json` has no step that evaluates JavaScript (its
-vocabulary is click, fill, press, wait, hold, mouse, shot, state) and no key grants a
-weapon.
+**What a new gun touches.** One entry in `WEAPONS` is nearly the whole change:
 
-### An enemy — `src/content/enemies.ts` (+ `enemiesA.ts`), read by `src/sim/systems/enemies/`
+- It is obtainable the moment it exists. `listGuns` in `src/sim/systems/pickups.ts` offers every
+  gun the run is not already holding, so a chest or a level-up card can hand it out on the first
+  wave and nothing else has to know its name.
+- `mesh` is a label, not a lookup — nothing reads it. A gun's look comes from `family`:
+  `weaponKit()` in `src/render/meshes/props.ts` builds one shape per family for the player's two
+  hands, and `FAMILY_BATCH` in `src/render/instancing.ts` gives each family one instanced shot
+  batch, so a new alien gun draws in the cyan batch as soon as it is written. A genuinely
+  new silhouette is a `meshes/` change, and only for a *body* does the triangle budget in
+  `tests/unit/meshes.test.ts` come into it.
+- `sfx` has to name an entry in `RECIPES` (`src/audio/sfx.ts`) or the gun silently falls back to
+  the light-gun click, which is why the recipe list is short and shared between families.
+- The HUD writes its own caption: `handLabel` splits the camel-case id and adds
+  `family · fire`, so `disruptorOrb` prints as "Disruptor Orb / alien · orb" with nothing to
+  author.
+- To hand it to the player in a test: `loadSlot(world.slots[1], i)` — one call that fills the
+  magazine, the charge and the gauge state, which is what the unit tests and
+  `__forgeDebug.giveWeapon(id)` both use (a swap refuses an empty hand).
+- The tests to add: a case in `tests/unit/weapons-a|b|c.test.ts` for the numbers (build a World,
+  `loadSlot` the gun, step it and read the pools) and a step in `tests/e2e/weapons-a.spec.ts` or
+  `weapons-b.spec.ts` for the grant path, read back through `__forgeState()` as `heat` /
+  `venting` / `energy` per hand — `forge-scenarios.json` has no step that evaluates JavaScript
+  (its vocabulary is click, fill, press, wait, hold, mouse, shot, state) and no key grants a
+  weapon.
+
+### Adding an enemy — `src/content/enemies.ts` (+ `enemiesA.ts`), read by `src/sim/systems/enemies/`
 
 Add an `EnemyDef` to the table — the core thirteen live in `enemies.ts`, later archetypes in
 `enemiesA.ts`, and `ENEMIES` (the only thing anyone else imports) is both spread together —
@@ -236,21 +425,38 @@ rather than being absorbed — and a telegraphed attack always buys the player t
 400 ms of warning before it lands.
 
 To make the archetype actually *arrive*, it has to be in the chapter's data two ways at most:
-in a `PACKS` row (the drumbeat, which fills the gaps and walks those recipes in order, so a
-chapter's mix is knowable rather than drawn from luck) and, for the moments you want at a
-second you choose, in that chapter's `waves` script. Which row you edit is a real choice — the
-browser scenarios only play the first waves, so a body put into the early rows changes what a
-scenario (and a new player) meets first.
+in a `PACKS` row in `src/content/enemies.ts` (the drumbeat, which fills the gaps and walks those
+recipes in order, so a chapter's mix is knowable rather than drawn from luck) and, for the moments
+you want at a second you choose, in that chapter's `waves` script. Which row you edit is a real
+choice — the browser scenarios only play the first waves, so a body put into the early rows
+changes what a scenario (and a new player) meets first.
 `accent` is the body's emissive core colour — the renderer reads it per archetype; bodies
 themselves stay dark matte (DESIGN.md "Palette").
 
-### A power-up — `src/content/powerups.ts`
+Then the three checks a new body owes: `tests/unit/enemies-split.test.ts` fails if `AI_IDS` has
+an id the `AI` table does not cover (that one is a typecheck error too) or if a helper got copied
+into a second module; a behaviour file of your own wants its own `tests/unit/enemies-*.test.ts`,
+written the way `enemies-e.test.ts` is written — drive `step()` with plain `InputFrame`s and
+assert on the telegraph events, not on a drawing; and `tests/e2e/enemies-a.spec.ts` is where a
+body that has to be *reachable in the browser* gets pinned.
 
-Add a `PowerupDef` with `maxTier` and `apply(stats, tier)`. Granting one refolds every owned
-power-up into `world.stats` from scratch, so a multiplier never depends on the order the
-grants arrived in, and a grant past `maxTier` does nothing.
+### Adding a power-up — `src/content/powerups.ts`
 
-### A level — `src/content/levels/`, read by `src/sim/systems/levels.ts`
+Add a `PowerupDef` with `kind` (`stat`, `timed` or `curse`), `maxTier` and `apply(stats, tier)`.
+Granting one refolds every owned power-up into `world.stats` from scratch, so a multiplier never
+depends on the order the grants arrived in, never compounds across ticks, and a grant past
+`maxTier` does nothing; a `timed` one runs out and stops being counted rather than sitting on the
+stat block forever.
+
+A card has to change a number the simulation actually reads. `tests/unit/powerups.test.ts` walks
+the whole table and fails on a card that changes nothing *and* on a `StatBlock` field nobody
+reads, so a new stat needs its read point in `src/sim` in the same change — a card that lies is
+worse than a card that is missing. Two doors offer one: a level-up deals three cards out of the
+cards still under their cap (`buildChoices`), and a supply crate gives a gun *or* a power-up, so a
+new card is reachable as soon as it is written. Both doors go through `grantPowerup`, which is
+also where a re-dose replaces a running timed dose instead of stacking a second copy of it.
+
+### Adding a level — `src/content/levels/`, read by `src/sim/systems/levels.ts`
 
 A chapter is a floor plan, a wave script and an elite roster, and `startChapter` installs all
 three before the wave clock starts. The ten chapters are written out in three files, by range:
@@ -338,7 +544,77 @@ start the mode without a saved win: the scripted door exists so the `arena` scen
 start another arena run; the only way out is the menu. On death the summary shows the same five
 numbers as a chapter run with "Endless Arena" where the chapter name goes.
 
-### A song, and a sound — `src/audio/`
+### Adding a model — built in `src/render/meshes/`, or streamed from `public/`
+
+A look is chosen one of two ways, and the choice is made by how many of the thing there are.
+Bodies, rounds and telegraphs are **built**: procedural geometry, because 1,000 bodies cannot be
+authored one at a time (DESIGN.md "Horde"). The room's cover is **fetched**: CC0 glTF, because a
+handful of set pieces is cheaper to stream than to model. What a page streams at startup is nine
+files — the floor's three maps, the kit's shared colormap, the HDRI and four kit modules — about
+3.2 MB, of which the HDRI is half.
+
+**Built.** Add a recipe to `SHAPES` in `src/render/meshes/shapes.ts`, keyed by *silhouette* and
+authored in metres with the feet at `y = 0`; `shapesC.ts` takes the exceptions whose shape has to
+carry a behaviour (the teleporter, the burrower, the spawner). Then put `mesh: "<your key>"` on
+the `EnemyDef` — most new archetypes wear a shape that already exists and `fit` scales it, so
+look for one before writing a recipe.
+
+- `hordeMesh(id)` answers an unknown key with the `chaser` recipe rather than with an error, so a
+  typo draws the wrong body instead of failing. `tests/unit/meshes.test.ts` is what catches it: it
+  walks every `mesh` id in the content tables and fails if one has no `[body, core]` entry in
+  `SHAPE_COSTS`, or pays outside the 40–300 triangle body budget. Add the new recipe's pair to
+  that table, read back with `triangleCount()` rather than counted by hand.
+- The budget is per draw. `createBatches` gives each archetype its own instanced pair — bodies
+  and accent cores — drawing a shape it may share with other archetypes, so 1,000 bodies of a
+  206-triangle recipe costs 206,000 triangles. A new shape is therefore a performance decision,
+  not a free asset; that is why the cost is written down twice, in the recipe and in the test.
+- Nothing in `src/render/meshes/` reads a `World`. It hands out geometry and materials and stays
+  ignorant of who wears them — the caller is `instancing.ts`, which clones each shape before it
+  attaches a batch's per-instance buffers.
+
+**Streamed.** Put the file under `public/` — Vite serves that folder verbatim at the site root,
+which is where the paths in `src/render/assets.ts` point — and add a row to `ASSETS.md` with its
+source URL, licence and author. CC0 or equivalent only, and one kit per family: the Kenney City
+Kit Industrial pack is the only set-dressing source, so cover reads as one place (DESIGN.md).
+Keep the repo small the way it already is — the kit's duplicate FBX/OBJ formats and its preview
+PNGs were deleted, only the GLBs, their shared `Textures/colormap.png` and `License.txt` are
+kept. Prefer a folder name without a space: `MODEL_ROOT` has to percent-encode the one the kit
+arrived with (`GLB%20format`).
+
+- Cover is one instanced layer per look. `PROP_MODEL` holds one module per `PropKind`, **in
+  `PropKind` order** — Wall, Crate, Tank, Pillar. Swapping a module means editing that entry
+  *and* the `MODULE_SIZE` and `MODULE_HEIGHT` at the same index: those two numbers are what keep
+  a module inside the collider that stops the player, and `src/sim/systems/obstacles.ts` stays
+  the source of truth for what blocks a body. A module that pokes outside its box is a wall you
+  can shoot through, which is the bug `scenery.ts` names.
+- Modules are **repeated, not stretched**: `layModules` fills the obstacle's footprint at the
+  module's own proportions (`RUN_CAP` along one axis, `LAYER_CAP` instances per layer) and pulls
+  the last row back flush with the box. Only the fallback primitive may stretch, because a box
+  has no detail to smear.
+- `toModule()` bakes each glTF node's world matrix into the vertices before measuring, drops
+  every attribute the primitives disagree about (only position, normal and uv survive; a mesh
+  with no normals gets them recomputed) and merges everything into one non-indexed buffer. That
+  merge is what lets a whole kit draw in one material — and it is why a new kit piece has to
+  share `Textures/colormap.png`. A model with its own texture needs its own material and its own
+  layer, which is a different change than adding a module.
+- Everything streamed is optional and degrades: a file that does not arrive leaves the fallback
+  box or the flat concrete in place, pushes its path into `Assets.missing`, and that count seeds
+  `__forgeState().errors` (`renderer.ts` starts the error count at it) beside a
+  `console.warn('assets not loaded: …')`. So a wrong path fails loudly instead of quietly
+  flattening the room. All of it loads in one `Promise.all` before the first frame — it is
+  awaited so the floor cannot pop from grey to concrete a second into a run.
+- Streaming a *body* is not wired yet. `createBatches` takes geometry only from `meshes/`, so a
+  streamed character needs a second path first — a loaded glTF flattened to one module per
+  archetype, the way `toModule` does for cover — before one can be drawn. Nothing in the sim would
+  change; it is a renderer change plus the licence row.
+
+To check either kind: `npm test` for the shape costs, then `npm run dev` and load the floor it
+belongs on. `__forgeState().errors` should still be `0`, and `__forgeState().backend` beside
+`__forgeState().settings.quality` say what the machine picked — there is no on-screen debug
+overlay, those two hooks are the instruments — which is where a Low-tier machine will differ from
+the one that authored the look.
+
+### Adding a song, and a sound — `src/audio/`
 
 The soundtrack is three `SongDef`s in `src/audio/songs.ts`, and `CHAPTER_SONGS` says which of
 the ten floors plays which. A track is a tempo, a scale, a register and a set of parts on the
