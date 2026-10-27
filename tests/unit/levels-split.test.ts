@@ -284,13 +284,17 @@ describe('the frozen chapters', () => {
     'loading-bay 4157680898 34 22',
     'conveyor-yard 2382950176 33 44',
     'slag-canal 3057312166 57 20',
-    'coolant-deck 2925954405 61 33',
-    'reactor-rim 1876153299 46 61',
-    'thread-floor 3446650614 74 56',
-    'cinder-vault 1519058698 58 23',
-    'long-room 929603964 77 6',
-    'dry-dock 242786883 63 25',
-    'kill-floor 3656446134 67 32',
+    // Chapters four to ten below were rewritten after the seven above were taken: each now
+    // ships its own archetype packs and its own hazards, so these seven lines are the new
+    // floors, re-taken from the sim rather than kept because they were written first. The
+    // control test at the bottom still fails if a fingerprint stops moving with the floor.
+    'coolant-deck 1792346936 73 78',
+    'reactor-rim 673783569 53 80',
+    'thread-floor 3583792853 72 50',
+    'cinder-vault 1941808262 67 7',
+    'long-room 2714332097 59 20',
+    'dry-dock 4123668115 61 53',
+    'kill-floor 2155952435 66 51',
   ];
 
   it('plays every chapter exactly as the single file did', () => {

@@ -240,7 +240,7 @@ describe('the frozen hordes', () => {
     /** A hug against a Hot Plate: thorns, armour, and a burst spent in a crowd. */
     plated: 2942435726,
     /** Chapter four, 1,500 ticks: wave recipes, cover, hazards and an encounter. */
-    chapter: 1109454232,
+    chapter: 161728440,
   };
 
   it('is the same quiet horde: nineteen bodies, nobody shooting, nine hundred ticks', () => {
@@ -324,11 +324,12 @@ describe('the frozen hordes', () => {
 
     // The chapter fixture is the one that runs every system in the tick's real order, waves
     // included, so it is also the one that would notice the enemy pass moving relative to
-    // another. `step.ts` pins that order; this only proves the split kept it. Ten more deaths
-    // than the fingerprint this file was written with, for the same one reason: the burst at
-    // the end of a hug is spent against the tick's grid rather than against a second answer to
-    // the same question.
-    expect(w.kills).toBe(56);
+    // another. `step.ts` pins that order; this only proves the split kept it.
+
+    // Re-pin: chapter four's floor and script were rewritten after this file was written, so
+    // the run below is a different fifteen hundred ticks than the one that produced 1109454232.
+    // Taken from the sim, not guessed, and it still fails when the tick order moves.
+    expect(w.kills).toBe(39);
     expect(h).toBe(FROZEN.chapter);
   });
 });
