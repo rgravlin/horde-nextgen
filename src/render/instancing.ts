@@ -9,16 +9,18 @@
  *   `count` instances. Nothing is allocated per frame: the matrix array is written in place
  *   and every batch is built once at its pool's hard cap, so a full arena costs no more
  *   allocation than an empty one.
- * - One batch per *look*, chosen from the content tables. Thirteen archetypes need twenty-six
- *   draws (a matte body and the accents that ride on it) and the rounds need six, so the whole
- *   crowd costs under forty draws — which is what keeps the frame inside its budget (TECH.md
- *   "Draw calls").
+ * - One batch per *look*, chosen from the content tables. Nineteen archetypes need
+ *   thirty-eight draws (a matte body and the accents that ride on it) and the rounds, the
+ *   shards and the dash trail need seven, so the whole crowd costs forty-five draws — which is
+ *   what keeps the frame inside its budget (TECH.md "Draw calls"). A pair is built per
+ *   archetype, so two archetypes that wear the same shape still cost two draws each: the shape
+ *   a body wears changes what one draw looks like, not how many there are.
  * - Positions are read at the interpolation point. The sim is one to five ticks ahead of the
  *   frame that draws it, so a body is drawn at `pos + velocity * dt * (alpha - 1)`, which lands
  *   it between where it was and where it is. That is what the accumulator's `alpha` is for
  *   (TECH.md "Simulation and rendering") and it needs no second copy of the pools.
  * - Size comes from the data. A shape is authored at the size of the archetype that uses it
- *   (see `meshes.ts`), so an instance only needs the collision radius folded in, and two
+ *   (see `meshes/`), so an instance only needs the collision radius folded in, and two
  *   archetypes that share a shape can still be told apart.
  *
  * Flash and dissolve come from the tick's event ring: `Hit` lights a body white for 60 ms and

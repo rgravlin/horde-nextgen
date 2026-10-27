@@ -4,6 +4,12 @@
  * A recipe is a list of parts in the toolkit's idiom (see `primitives.ts`), authored at the
  * size of the archetype that uses it, and built once per page: a restart rebuilds the batches
  * and twenty restarts should not mean twenty copies of the same geometry in GPU memory.
+ *
+ * The recipes below are keyed by *silhouette* and shared by whoever wears one, which is the
+ * rule for everything that walks at you. The three that do not — the teleporter, the burrower
+ * and the spawner — are keyed by archetype and live in `shapesC.ts`, spread in at the bottom of
+ * this record: they still come through `hordeMesh`, so the cache and the chaser fallback stay
+ * in one place.
  */
 
 import {
@@ -17,6 +23,7 @@ import {
 } from 'three/webgpu';
 
 import { boxSegment, build, leg, type HordeMesh, type Piece } from './primitives';
+import { SHAPES_C } from './shapesC';
 
 /**
  * The archetypes, by mesh id.
@@ -24,7 +31,8 @@ import { boxSegment, build, leg, type HordeMesh, type Piece } from './primitives
  * Every entry names a *shape*, not an archetype: two archetypes may share one (a swarmling
  * and what a splitter leaves behind are the same animal at two sizes), so a new archetype
  * that reuses a shape costs one data line. Sizes are authored in metres with the feet at
- * y = 0.
+ * y = 0. The three recipes spread in at the end break both rules on purpose — see
+ * `shapesC.ts`.
  */
 const SHAPES: Record<string, () => HordeMesh> = {
   /**
@@ -350,6 +358,10 @@ const SHAPES: Record<string, () => HordeMesh> = {
       ]
     ),
   }),
+
+  // The three that do not walk at you, keyed by archetype rather than by silhouette. See
+  // `shapesC.ts` for what each one is drawn to be read as.
+  ...SHAPES_C,
 };
 
 /**

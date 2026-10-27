@@ -210,8 +210,11 @@ behaviour gets its own file under `src/sim/systems/enemies/` rather than being a
 file that already holds a range of them: `marksmen.ts` holds the two bodies that share a
 locked sight line, `rushers.ts` the ones that commit to a dash, `support.ts` the ones that
 buff. What a body draws is a separate choice: `mesh` names a recipe in `SHAPES`
-(`src/render/meshes/shapes.ts`), which `tests/unit/meshes.test.ts` pins by triangle count, so
-a new id needs its cost added there as well as its recipe.
+(`src/render/meshes/shapes.ts`, plus `shapesC.ts` for the three bodies whose shape has to
+carry a behaviour of their own), which `tests/unit/meshes.test.ts` pins by triangle count, so
+a new id needs its cost added there as well as its recipe. A new archetype can wear a shape
+that already exists — most of them do — and `fit` scales it to the body instead of
+re-authoring it.
 
 The fields with behaviour behind them are `hp`, `speed`, `radius`,
 `armor`, `xp` (the shard the body drops) and `params`: `sepRadius`/`sepPush` for crowd

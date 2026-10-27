@@ -17,6 +17,9 @@
  * - `primitives.ts` — the toolkit: how parts merge into one faceted buffer, and how a
  *   triangle count is read back off the result.
  * - `shapes.ts` — the archetype recipes, keyed by mesh id, and the cache that hands them out.
+ * - `shapesC.ts` — the three bodies that break the walking default (teleporter, burrower,
+ *   spawner), keyed by archetype because their shape carries the behaviour. Spread into
+ *   `SHAPES`, so they come through `hordeMesh` like every other recipe.
  * - `props.ts` — the projectiles, the player's kit-bash and the flat shapes a telegraph uses.
  * - `materials.ts` — the three materials, and what the two per-instance attributes do to them.
  *

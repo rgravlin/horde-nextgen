@@ -92,7 +92,10 @@ export interface EnemyDef {
    * Presentation, kept here because what a body looks like is part of how it is read: the
    * shapes are authored one per silhouette and shared by whoever needs them, so a new
    * archetype that looks like an existing one costs one word rather than a new mesh. An id the
-   * render layer does not know falls back to the chaser's shape.
+   * render layer does not know falls back to the chaser's shape. The three bodies that break
+   * the walking default are the exception and are keyed by archetype — `teleporter`,
+   * `burrower` and `spawner` in `render/meshes/shapesC.ts` — because a shape whose job is to
+   * carry a behaviour cannot be shared with a body that does not have it.
    */
   readonly mesh: string;
   /**

@@ -55,6 +55,11 @@ const SHAPE_COSTS: Record<string, readonly [number, number]> = {
   atlas: [112, 32],
   sniper: [92, 16],
   orbiter: [158, 68],
+  // The three keyed by archetype rather than silhouette (`shapesC.ts`), so they are worn by
+  // one body each and their cost is that one body's, not a pack's.
+  teleporter: [74, 44],
+  burrower: [150, 36],
+  spawner: [180, 44],
 };
 
 /** Every mesh id the content tables actually spawn, in table order. */

@@ -106,14 +106,18 @@ export const ENEMIES_A: readonly EnemyDef[] = [
   {
     id: 'teleporter',
     faction: 'cult',
-    // The shard-and-spur silhouette the swarmling cloud wears, at four fifths again the
-    // radius: the shape is the one the eye already reads as "several of something, arriving
-    // fast", and it is drawn a full head taller than the cloud so a single one of these in
-    // the middle of a swarmling sweep does not read as one more mote. Its tell is a charge
-    // strip like the charger's, which is the reason it borrows the runner's own
-    // `dashReach`/`phaseSpeed` names — see `systems/enemies/phaser.ts`.
-    mesh: 'mote',
-    fit: 1.4,
+    // A shape of its own rather than the cloud a swarmling arrives in: a body that crosses
+    // eight metres of floor in a tick has to read as *one* body, and the shard-and-spur
+    // silhouette reads as several of something. The new outline is sheared — its top half sits
+    // forward of its bottom half and two chips of its own wake trail it — so it is the only
+    // silhouette in the horde that looks disassembled, which is the read the archetype needs
+    // before its strip is spent. Authored about 1.05 m nose to wake and 0.6 m across for a
+    // 0.84 m hit circle: longer than the circle along its bearing and narrower than it across,
+    // the same trade the sniper's barrel makes and for the same reason — the shape and the line
+    // it spends say the same bearing. Its tell is a charge strip like the charger's, which is
+    // the reason it borrows the runner's own `dashReach`/`phaseSpeed` names — see
+    // `systems/enemies/phaser.ts`.
+    mesh: 'teleporter',
     // Thin, fast and gone before the second gun turns: 28 HP with no plate is less than a
     // chaser's, because a body that crosses eight metres of floor in two moves has to be
     // dead the tick it is seen or the fight stops being about where you stand.
@@ -157,16 +161,20 @@ export const ENEMIES_A: readonly EnemyDef[] = [
   {
     id: 'spawner',
     faction: 'reactor',
-    // The broodmother's silhouette at half its size, on purpose: the sac that glows with
-    // young is the one shape in the game that already means "this is making bodies over
-    // there", and a player who met it at the chapter-1 finisher reads this one the same way
-    // from across the room. It is a support body, so it wears the support accent.
-    mesh: 'sac',
-    fit: 0.48,
-    // 0.68 rather than the 0.72 the silhouette wants: the hit queries pad for the widest
-    // body in the table, and the roster test keeps a non-boss under 0.7 so no trash body
-    // widens every shot in the game. The sac reads at this size anyway, and it is a support
-    // body meant to be picked out across a room, not a wall.
+    // The broodmother's sac at half its size was the plan, and it was a good one: the sac that
+    // glows with young is the shape that already means "this is making bodies over there". What
+    // it could not say at a third of the boss's height was *how many times yet* — and the count
+    // is this body's whole bargain, since it turns into a walker the moment it runs dry. So it
+    // wears a carrier of its own: a bulb with a torn chute, three lit young riding along the
+    // tear (`shapesC.ts`), and a head low enough at the front that it still reads as a runner
+    // rather than as a thing sitting in one place, which is how it actually fights. It is a
+    // support body, so it keeps the support accent.
+    mesh: 'spawner',
+    // 0.68 rather than the 0.72 a body this size would want: the hit queries pad for the
+    // widest body in the table, and the roster test keeps a non-boss under 0.7 so no trash
+    // body widens every shot in the game. The carrier is authored at its own size instead of
+    // scaled down from the boss's, which leaves it about 0.8 m across inside a 1.36 m hit
+    // circle: it is a support body meant to be picked out across a room, not a wall.
     hp: 70,
     speed: 3.6,
     radius: 0.68,
@@ -201,12 +209,16 @@ export const ENEMIES_A: readonly EnemyDef[] = [
   {
     id: 'burrower',
     faction: 'swarm',
-    // The splitter's segmented silhouette at three quarters of its size: low, armoured-looking
-    // and wider than it is tall, which is what a body that comes along the floor rather than
-    // across it needs to read as. Reused rather than newly modelled because the rule is that a
-    // new archetype wears a silhouette the player has already learned to pick out of a crowd.
-    mesh: 'shell',
-    fit: 0.75,
+    // The splitter's segmented shell at three quarters of its size got it half right: low and
+    // wider than tall is what a body that comes along the floor needs. What it could not do is
+    // stop looking like a body standing up — the shell is a metre tall before the scale that
+    // took it to 0.76 m, which in the middle of the pack is the splitter's own silhouette a
+    // head shorter. So this is a tunneller now: plates that step down towards the back, a
+    // ploughshare where its legs would be and a seam of light along its back, which is the only
+    // thing the player has to track it by for the second its trench is unshootable
+    // (`shapesC.ts`). 0.47 m tall against 1.07 m of length, so a glance says "long, low,
+    // coming from the side".
+    mesh: 'burrower',
     // Squishy: the fight is with the *place* it picks, not with the body. Twenty-six HP is a
     // chaser's, and it is worth seven XP because a player who reads the ring and leaves it has
     // spent three quarters of a second doing the thing every later chapter asks for.
