@@ -83,7 +83,7 @@ export interface HudView {
    * Load, and a screen that cannot do a thing should not show a button for it.
    */
   hasSave(): boolean;
-  /** Take a chapter tile. `index` is the chapter's slot in `content/levels.ts`. */
+  /** Take a chapter tile. `index` is the chapter's slot in `content/levels/`. */
   choose(index: number): void;
   /** The live settings, for the Settings panel. Read while that panel is up. */
   readonly settings: Settings;

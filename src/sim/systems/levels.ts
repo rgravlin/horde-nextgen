@@ -4,7 +4,7 @@
  *
  * This is the half of a level that is *about the room*, and it is deliberately the half that
  * knows nothing about bosses. A chapter's boxes and hazards are installed the moment it starts,
- * in one call, from `content/levels.ts`. A fresh `World` has no geometry, and a chapter is the
+ * in one call, from `content/levels/`. A fresh `World` has no geometry, and a chapter is the
  * only door that puts any down — the same reason an idle world spawns nothing: every test
  * fixture and the paused arena are expected to be *empty*, not quietly chapter 1.
  *

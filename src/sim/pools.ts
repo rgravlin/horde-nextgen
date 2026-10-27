@@ -73,7 +73,7 @@ export interface Pool {
   readonly fy: Float32Array;
   /**
    * Elite variant id + 1, for the enemy pool only (0 is a plain body). See
-   * `content/levels.ts`: a chapter says which variants it rolls and how often, and
+   * `content/levels/`: a chapter says which variants it rolls and how often, and
    * `systems/enemies/` reads this back when it sets a body's HP, its touch damage and
    * its gait. Kept in the pool rather than in a side table for the same reason `phase`
    * is — a recycled slot has to start clean without anything remembering to clear it.

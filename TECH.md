@@ -94,7 +94,7 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
 ## Code patterns
 ```
 src/sim/      world.ts(+ pools.ts constants.ts events.ts, all re-exported through world.ts) step.ts rng.ts spatialHash.ts systems/(move,steer,weapons,status,enemyProjectiles,pickups,waves).ts systems/projectiles/(index,shared,ray,melee,flyers).ts systems/enemies/(index,shared,spawn,update,behaviours,seekers,rushers,standoff,support,bosses,contact,deaths).ts serialize.ts replay.ts
-src/content/  weapons.ts enemies.ts powerups.ts levels.ts  (data only, typed defs)
+src/content/  weapons.ts enemies.ts powerups.ts levels/(index,types,elites,builders,chapters-1-3,chapters-4-6,chapters-7-10).ts  (data only, typed defs; `index.ts` joins the three chapter files into `LEVELS`)
 src/render/   renderer.ts instancing.ts particles.ts post.ts lights.ts assets.ts camera.ts
 src/audio/    synth.ts songs.ts sfx.ts      src/ui/ hud.ts menus.ts (DOM overlay)
 src/main.ts   tests/unit/*.test.ts  tests/e2e/*.spec.ts  tools/bench.ts  public/assets/

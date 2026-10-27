@@ -30,7 +30,7 @@ import { Ev, Tele, TUNE, clearEvents, createWorld, loadSlot, type World } from '
  *   ticks later — so a run sampled once at the end cannot tell a real telegraph from a one-tick
  *   flash, and cannot say which tick a body appeared on.
  * - **The chapter's own data is the expectation.** `duration`, `bosses`, `props` and `size` are
- *   read back out of `content/levels.ts` rather than written down again here: one source of
+ *   read back out of `content/levels/` rather than written down again here: one source of
  *   truth (AGENTS.md), so a chapter that changes its script changes its test.
  * - **Health is topped up while the script runs, and the room is sometimes emptied at the
  *   encounter.** This file is not about whether a pistol survives a chapter — that is a balance

@@ -119,7 +119,7 @@ export interface WaveState {
   cursor: number;
   /**
    * Seconds of the chapter's script spent, counted from the moment its clock started. A
-   * scripted pack's `t` in `content/levels.ts` is a number on this clock, and a chapter's
+   * scripted pack's `t` in `content/levels/` is a number on this clock, and a chapter's
    * `duration` is where the clock stops and the encounter walks in — which is why it is a
    * second count rather than another way of saying which wave it is on.
    */

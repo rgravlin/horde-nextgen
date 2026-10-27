@@ -3,7 +3,7 @@
  * through, and the two floor hazards that hurt for standing still.
  *
  * This is the half of a level the sim can actually feel. A chapter's layout is a list of
- * boxes and circles in `content/levels.ts`; this file is the read path, built once when a
+ * boxes and circles in `content/levels/`; this file is the read path, built once when a
  * chapter is installed and then queried by the player's movement, by every enemy's travel
  * step, by every round in the air and by every place the spawner might put a body down.
  * Nothing here runs per tick beyond those queries, and none of them allocate.
@@ -52,7 +52,7 @@ export const PropKind = {
 /** How many prop layers the renderer builds: one per `PropKind` above. */
 export const PROP_KIND_COUNT = 4;
 
-/** The two hazards a chapter can put on its floor. See `content/levels.ts`. */
+/** The two hazards a chapter can put on its floor. See `content/levels/`. */
 export const ZoneKind = {
   /** Corrosion pool: damage over time while you stand in it, for both sides. */
   Acid: 0,
@@ -556,7 +556,7 @@ export function pushedY(): number {
  * event only has to say that a shape opened. `armed` is what keeps the two halves apart — a
  * clock that merely crossed zero would fire again the moment it was refilled.
  *
- * `warn` is authored, not derived, and every crusher in `content/levels.ts` sets it above
+ * `warn` is authored, not derived, and every crusher in `content/levels/` sets it above
  * 0.4 s, which is DESIGN.md's floor for a tell a player is asked to answer.
  */
 export function tickZones(

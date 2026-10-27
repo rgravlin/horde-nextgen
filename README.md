@@ -250,10 +250,18 @@ Add a `PowerupDef` with `maxTier` and `apply(stats, tier)`. Granting one refolds
 power-up into `world.stats` from scratch, so a multiplier never depends on the order the
 grants arrived in, and a grant past `maxTier` does nothing.
 
-### A level — `src/content/levels.ts`, read by `src/sim/systems/levels.ts`
+### A level — `src/content/levels/`, read by `src/sim/systems/levels.ts`
 
 A chapter is a floor plan, a wave script and an elite roster, and `startChapter` installs all
-three before the wave clock starts. Add a `LevelDef` to `LEVELS` and the campaign plays it.
+three before the wave clock starts. The ten chapters are written out in three files, by range:
+`chapters-1-3.ts`, `chapters-4-6.ts`, `chapters-7-10.ts`, which `index.ts` spreads into
+`LEVELS` in play order — that join is the only thing that decides which floor comes next. Add
+a `LevelDef` to the file for its range, or a fourth file and one line in `index.ts`, and the
+campaign plays it. What the chapters share is written once: the floor and script shorthands
+and the three chapter-family tints in `builders.ts`, the elite variants in `elites.ts`, the
+`LevelDef` schema in `types.ts`.
+`tests/unit/levels-split.test.ts` fingerprints a 1,800-tick run of each chapter, so a floor
+plan that changes on the way is a failing test rather than a campaign that plays differently.
 
 The fields with behaviour behind them: `size` is the arena's half-extents in metres — a World
 builds 120×120 m of floor and a chapter claims a square of it, and the band the game keeps

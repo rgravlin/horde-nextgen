@@ -202,7 +202,7 @@ export function travelScale(w: World, ex: number, ey: number, eliteGait: number)
  *
  * Draws at most one rng number per body, and none at all on a chapter that declares no
  * elites — which is what keeps every seeded run predating the variants bit-for-bit the
- * run it already was. The roster comes pre-resolved out of `content/levels.ts` so a
+ * run it already was. The roster comes pre-resolved out of `content/levels/` so a
  * spawn never probes a name map.
  */
 export function rollElite(w: World, roster: readonly number[]): number {

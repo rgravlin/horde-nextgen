@@ -3,7 +3,8 @@
  *
  * Two things put bodies down here and they answer to different halves of a chapter.
  *
- * The **script** is `LevelDef.waves` in `content/levels.ts`: packs the chapter authored, each
+ * The **script** is `LevelDef.waves` — schema in `content/levels/types.ts`, the ten scripts in
+ * the three chapter files under `content/levels/`: packs the chapter authored, each
  * at a second and from an edge, so a level has set pieces — the charger volley that comes down
  * the conveyor lane at 0:40, the armoured wedge that arrives off both canal banks at once. A
  * scripted pack is the same in every run at every seed, which is what makes a level
