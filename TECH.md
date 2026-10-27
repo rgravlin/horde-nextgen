@@ -103,7 +103,7 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
 - **Frame budget:** hold 16.6 ms. The headless sim gate is **≤4 ms per step** (median over 600 ticks) with 1,000 enemies, measured in `npm run bench` with Node and a fail exit code if exceeded. It installs a floor under the load by default — chapter 10, the densest room in the game — because cover is what makes a horde expensive; `--floor=0` drops it to the teaching bay and `--floor=none` to open arena. Flags are `--ticks`, `--budget`, `--floor`, `--enemies`, `--shots`, `--particles`, `--out`, and README's "Commands" is where they are written out.
 - **Pools with hard caps:** enemies 2,048, projectiles 2,048, enemy projectiles 512, shards 1,024
   (`src/sim/constants.ts`), particles 8,192 in the stepped ring (`src/sim/fx.ts`), drawn as four
-  palette batches of the tier's budget each — 512/1,024/2,048/4,096 — plus 64 damage numbers and
+  palette batches of the tier's budget each — 512/1,024/2,048/4,096 — plus 128 damage numbers and
   0/8/16/16 pooled lamps by tier (`src/render/quality.ts`).
 - **No per-tick allocations:** no closures, no `.map` or `.filter`, no new objects in `step()`.
 - **Draw calls:** about 1 per archetype mesh plus props (target under 150).

@@ -245,12 +245,18 @@ function readSettings(storage: StorageLike | null, quiet: string[]): Settings {
 }
 
 /** The settings plus the URL's backend override, in the shape `createView` takes. */
-function viewOptions(settings: Settings, forceWebGL: boolean): ViewOptions {
+function viewOptions(settings: Settings, forceWebGL: boolean, host: HTMLElement | null): ViewOptions {
   return {
     forceWebGL,
     quality: settings.quality === 'auto' ? undefined : settings.quality,
     resolutionScale: settings.resolutionScale,
     shake: settings.shake,
+    damageNumbers: settings.damageNumbers,
+    // Where the damage numbers draw, and whether they draw at all. `createNumbers` takes these
+    // two together: without a host the layer is built anyway and counts every hit into a pool no
+    // one reads, so the numbers are on in the settings and absent from every frame, and the
+    // toggle has nothing to turn off.
+    overlay: host,
   };
 }
 
@@ -302,7 +308,7 @@ async function boot(): Promise<void> {
   let view: View | null = null;
   if (canvas) {
     try {
-      const result = await createView(canvas, viewOptions(settings, forceWebGL));
+      const result = await createView(canvas, viewOptions(settings, forceWebGL, ui));
       if (result.ok) view = result.view;
       else if (ui) showNoGpuPanel(ui, result.message);
     } catch (error) {

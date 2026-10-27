@@ -170,8 +170,11 @@ export const Ev = {
    * `a` is the HP actually taken off the body (after armour, so the number tells the
    * truth about the armour), `b` is 1 when the crit roll paid off and 0 otherwise, and
    * x/y where it landed. One event per hit rather than one per shot: a shotgun's eight
-   * pellets are eight numbers, and the pool is sixty-four wide precisely so that a
-   * number can be skipped when the screen is already full of them.
+   * pellets are eight events, and it is the presentation side's job to fold the ones
+   * that landed inside one body back into one number (see `MERGE_RADIUS` and
+   * `MERGE_WINDOW` in `render/damageNumbers.ts`). The pool is finite and a frame has a
+   * budget, precisely so that a number can be skipped when the screen is already full
+   * of them.
    *
    * A presentation feed only — no rule reads it — which is what lets the renderer drop
    * numbers it has no room for and the headless run stay unchanged.

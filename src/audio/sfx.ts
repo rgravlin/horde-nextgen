@@ -13,7 +13,7 @@
  *   one burst; a charging screen is hundreds of contacts a second. Sound arriving faster than
  *   about one per 45 ms stops being information and becomes a buzz, so the per-frame budget and
  *   the per-recipe gap below *are* the feature. `DESIGN.md` says the same thing about damage
- *   numbers ("the pool is sixty-four wide precisely so that a number can be skipped").
+ *   numbers ("numbers merge under a heavy horde so they never pile up into clutter").
  * - **Distance is a mute, not a curve.** Past a recipe's `reach` the sound is not played at
  *   all. The ring is a broadcast and a thousand bodies on the far side of the arena are not
  *   worth a hundred AudioNodes.

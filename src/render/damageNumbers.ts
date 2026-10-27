@@ -1,21 +1,29 @@
 /**
  * Damage numbers: the read half of `Ev.Damage` (DESIGN.md "Motion").
  *
- * Sixty-four floating numbers, each one a DOM node that lives 0.6 s, rises 0.6 m and fades out,
- * pinned to the point on the floor where the hit landed. They are DOM rather than canvas text
- * for the reason the design brief gives: the type has to stay crisp at any resolution scale,
- * and a 1,000-body frame is already asking a lot of the draw path.
+ * A hundred and twenty-eight floating numbers, each one a DOM node that lives 0.6 s, rises 0.6 m
+ * and fades out, pinned to the point on the floor where the hit landed. They are DOM rather than
+ * canvas text for the reason the design brief gives: the type has to stay crisp at any resolution
+ * scale, and a 1,000-body frame is already asking a lot of the draw path.
  *
  * Three things keep this a read-only layer:
  *
  * - It never writes a game value. It reads the event ring through its own cursor (the ring is a
  *   broadcast; see `EventRing`) and the numbers come from the events, not from the pools, so a
  *   number says what the hit paid rather than what the body has left.
- * - Sixty-four is the whole pool and the elements are built up front, so a heavy horde spends
- *   numbers, never nodes: a hit with no free slot and no neighbour to merge into is dropped.
- * - Neighbours merge. DESIGN.md asks for that by name ("numbers merge under a heavy horde so
- *   they never pile up into clutter"), and a merge is a sum into a live number near the same
- *   point, which is also what keeps a shotgun's eight pellets reading as one event.
+ * - The pool is fixed and the elements are built up front, so a heavy horde spends numbers, never
+ *   nodes: a hit with no free slot and no neighbour to merge into is dropped, and counted.
+ * - Neighbours merge. DESIGN.md asks for that by name ("numbers merge under a heavy horde so they
+ *   never pile up into clutter"), and a merge is a sum into a live number near the same point,
+ *   which is also what keeps a shotgun's eight pellets reading as one event.
+ *
+ * The pool's size and the reach of that merge are one decision, not two, and they were wrong
+ * together. A number holds its slot for `NUMBER_LIFE`, so sixty-four slots clear about one number
+ * every thirty-odd frames at 60 Hz: a sweep that wanted forty labels got one. And while the
+ * merge was wider than a body, a number spent its whole life as a magnet for everything nearby, so
+ * that sweep read as one label saying "280" in the middle of a pack — which says nothing about the
+ * forty hits it swallowed. Hence a pool that can hold a volley and the sweep after it, and a merge
+ * that folds up one event rather than one neighbourhood.
  *
  * The styling is inline rather than a class in `src/ui/styles.css` because this file lives on the
  * render side of the render/ui line and must not reach across it for a stylesheet (ARCHITECTURE.md
@@ -36,19 +44,47 @@ export const NUMBER_LIFE = 0.6;
 /** How far it rises over that life, in metres (DESIGN.md: "float up 0.6 m"). */
 export const NUMBER_RISE = 0.6;
 
-/** The pool's size: `ARCHITECTURE.md`'s "damage numbers 64". */
-export const NUMBER_CAP = 64;
+/**
+ * The pool's size: `ARCHITECTURE.md`'s "damage numbers 128".
+ *
+ * Sized by turnover, not by taste. A number lives `NUMBER_LIFE` (0.6 s, 36 frames), so the pool
+ * only clears `cap / 36` numbers a frame however busy the frame is: sixty-four was one every
+ * thirty-odd frames, and a shotgun's eight pellets spent the lot. A hundred and twenty-eight clears
+ * three and a half a frame — over two hundred labels a second — and still costs one fixed pass over
+ * the slots per hit rather than anything that grows with the crowd.
+ */
+export const NUMBER_CAP = 128;
 
-/** Numbers a single rendered frame may start, whatever the tick's event ring says. */
-export const NUMBER_BUDGET = 12;
+/**
+ * Numbers a single rendered frame may start, whatever the tick's event ring says.
+ *
+ * A quarter of the pool, and counted in numbers rather than hits (see `readNumberEvents`): it
+ * exists to keep one enormous frame from spending the layer on its first millisecond, not to
+ * ration a volley that would have merged anyway.
+ */
+export const NUMBER_BUDGET = NUMBER_CAP >> 2;
 
 /**
  * How close a hit has to land to join a number already on the way up, in metres.
  *
- * A metrey and a bit: wide enough that one shotgun's spread of pellets becomes one number, and
- * narrow enough that two bodies two metres apart stay two facts.
+ * About one body width, and that is the unit: the horde's bodies are 0.24–0.68 m in radius and
+ * keep some 0.7 m of separation from each other, so a hit inside this radius is the same body hit
+ * twice or two bodies touching, while two bodies that stand apart stay two facts. It is also under
+ * a tenth of the floor the camera covers, so numbers that do not merge still do not print on top of
+ * each other.
  */
-export const MERGE_RADIUS = 1.35;
+export const MERGE_RADIUS = 0.7;
+
+/**
+ * How long a number stays a merge target, in seconds of its own life.
+ *
+ * The other half of the rule, and the one that decides what a merge *means*: "these hits are one
+ * event", not "this patch of floor has a number". Two 60 ms beats (DESIGN.md's hit flash) is long
+ * enough for a volley to land — pellets fan out, so a shotgun's eight arrive spread over a few
+ * frames — and short enough that the next fight at the same spot gets its own label instead of
+ * feeding a number that has been rising since the first one.
+ */
+export const MERGE_WINDOW = 0.12;
 
 /** What a number's height above its point is when it starts, in metres. */
 const START_HEIGHT = 1.05;
@@ -122,12 +158,20 @@ export function advanceNumbers(pool: NumberPool, dt: number): void {
 /**
  * Put one number in the pool, or add to one that is already on its way up.
  *
- * Returns false when the pool is full and no live number is close enough to join: the hit still
- * happened and is still counted in the score, it just did not get a label.
+ * A hit joins a number when that number is still inside its own volley — younger than
+ * `MERGE_WINDOW` — and closer than `MERGE_RADIUS`. Both halves are needed: the radius alone makes
+ * every number in a crowd into a drain for the hits around it, and the window alone makes
+ * everything within reach of one point into one number.
+ *
+ * Returns false when the pool is full and no live number will take the hit: the hit still happened
+ * and is still counted in the score, it just did not get a label.
  */
 export function pushNumber(pool: NumberPool, x: number, y: number, amount: number, crit: boolean): boolean {
   if (amount <= 0) return false;
 
+  // A number is a merge target while its life is above this, which is its age measured from the
+  // other end: `life` is what the pool already keeps, so the window costs no second array.
+  const fresh = NUMBER_LIFE - MERGE_WINDOW;
   // The merge search doubles as the free-slot search, so a full pool costs one pass.
   let free = -1;
   let near = -1;
@@ -137,6 +181,7 @@ export function pushNumber(pool: NumberPool, x: number, y: number, amount: numbe
       if (free < 0) free = i;
       continue;
     }
+    if (pool.life[i] <= fresh) continue;
     const dx = pool.x[i] - x;
     const dy = pool.y[i] - y;
     const d2 = dx * dx + dy * dy;
@@ -173,6 +218,10 @@ export function pushNumber(pool: NumberPool, x: number, y: number, amount: numbe
  * field and audio each keep a place in `written` and this is a third one. Events the ring has
  * already overwritten are counted, not guessed at, and the per-frame budget is what keeps a
  * twelve-barrel frame from spending the whole pool on its first millisecond.
+ *
+ * The budget is counted in numbers, not in hits, which is the only honest unit: a merged hit costs
+ * the frame nothing to draw, so charging it would make the merge rule ration the hits that needed
+ * a label of their own.
  */
 export function readNumberEvents(pool: NumberPool, world: World): void {
   const ring = world.events;
@@ -194,8 +243,12 @@ export function readNumberEvents(pool: NumberPool, world: World): void {
     }
     const amount = ring.a[slot];
     if (amount <= 0) continue;
-    budget--;
-    pushNumber(pool, ring.x[slot], ring.y[slot], amount, ring.b[slot] !== 0);
+    // A hit that wants a number of its own spends the frame's share whether or not a slot was
+    // left for it: the budget bounds what a frame draws, not what it counts, so a frame that fell
+    // behind says so in `dropped` instead of quietly getting behinder.
+    const live = pool.count;
+    const placed = pushNumber(pool, ring.x[slot], ring.y[slot], amount, ring.b[slot] !== 0);
+    if (!placed || pool.count > live) budget--;
   }
   pool.read = total;
 }
