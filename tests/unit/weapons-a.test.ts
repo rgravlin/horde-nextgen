@@ -175,6 +175,7 @@ describe('weapon data', () => {
       'orbiter',
       'teleporter',
       'spawner',
+      'burrower',
       'spawnling',
     ]);
     expect(ENEMIES.filter((d) => d.boss).map((d) => d.id)).toEqual([

@@ -24,7 +24,7 @@
 import { ENEMIES } from '../../content/enemies';
 import type { DotDef } from '../../content/weapons';
 import { DT, type World } from '../world';
-import { killEnemy } from './enemies';
+import { killEnemy, underground } from './enemies';
 
 /**
  * What one charge takes off a body, after armour.
@@ -69,7 +69,11 @@ export function tickBurn(w: World): void {
   const enemies = w.enemies;
 
   for (let i = 0; i < enemies.cap; i++) {
+    // A burn stops while its body is under the floor and starts again when it comes up: the
+    // alternative is a fire that kills something nothing can see, which is the one thing the
+    // untargetable rule exists to forbid. The timer waits with it.
     if (enemies.alive[i] === 0 || enemies.hp[i] <= 0 || enemies.dotT[i] <= 0) continue;
+    if (underground(enemies.phase[i])) continue;
 
     enemies.dotT[i] = enemies.dotT[i] > DT ? enemies.dotT[i] - DT : 0;
     const armor = ENEMIES[enemies.kind[i]].armor;

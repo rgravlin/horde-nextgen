@@ -19,6 +19,7 @@
 import { type AiId } from '../../../content/enemies';
 import { type World } from '../../world';
 import { slamRunner, broodRunner, matronRunner } from './bosses';
+import { burrowRunner } from './burrowers';
 import { sniperRunner, orbiterRunner } from './marksmen';
 import { spawnerRunner } from './nursery';
 import { teleporterRunner } from './phaser';
@@ -49,6 +50,9 @@ export const AI: Record<AiId, AiFn> = {
   // and a body whose damage is other bodies.
   teleporter: teleporterRunner,
   spawner: spawnerRunner,
+  // The third that stops travelling over the floor: it crosses its last few metres underneath
+  // it, which is the one behaviour whose body has to leave the broad phase while it does.
+  burrower: burrowRunner,
   // The three end-of-level encounters, beside the trash they turn up rather than apart from
   // it: the same `AiFn` shape, the same pooled `phase` and `timer`, no boss class of their own.
   brute: slamRunner,

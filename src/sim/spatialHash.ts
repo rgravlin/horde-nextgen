@@ -13,6 +13,12 @@
  * `capacity` is how many entities one rebuild can index and `slotCount` how many
  * pool slots it may look at; `slotCount` must cover every slot index of the pool
  * being indexed, because itemCell is addressed by slot.
+ *
+ * The same filter answers two questions — whether a slot gets indexed and whether a
+ * query may hand it back — and it is deliberately *not* the pool's `alive` array. A
+ * body can be alive and unfindable (see `markFindable` in `systems/enemies`), and the
+ * only way "you cannot shoot what you cannot see" stays true is for the one array that
+ * says who is findable to be the one every query already reads.
  */
 
 export interface SpatialHash {
@@ -30,6 +36,15 @@ export interface SpatialHash {
   /** Per-cell occupancy, then reused as the scatter cursor. */
   readonly cellCount: Int32Array;
   readonly items: Int32Array;
+  /**
+   * Who the grid may hand back, one byte per pool slot.
+   *
+   * Filled at the top of every tick by `markFindable` and passed to both `rebuild` and
+   * `queryRadius`, so a slot marked 0 is neither indexed nor returned: it is not in the
+   * broad phase at all. Written from the enemy pass, read by everything that asks who is
+   * nearby, which is what keeps the two ends of that sentence from drifting apart.
+   */
+  readonly findable: Uint8Array;
   /** Items placed by the last rebuild. */
   count: number;
   /** Entities skipped because the grid was full. */
@@ -60,6 +75,7 @@ export function createSpatialHash(
     cellStart: new Int32Array(cells + 1),
     cellCount: new Int32Array(cells),
     items: new Int32Array(capacity),
+    findable: new Uint8Array(slotCount),
     count: 0,
     overflow: 0,
     queryOverflow: 0,
@@ -77,15 +93,16 @@ function cellOf(h: SpatialHash, x: number, y: number): number {
 /**
  * Rebuild the grid from the positions in `x`/`y`, walking slots 0 .. n-1.
  *
- * A slot counts as live unless `alive` says otherwise, which is how the
- * projectile and shard pools get indexed for free. Callers must not move
- * entities between a rebuild and the queries that use it.
+ * A slot counts only where `findable` says it may be found — pass `null` for a pool
+ * whose whole contents are findable, which is how the projectile and shard pools get
+ * indexed for free. Callers must not move entities between a rebuild and the queries
+ * that use it.
  */
 export function rebuild(
   h: SpatialHash,
   x: Float32Array,
   y: Float32Array,
-  alive: Uint8Array | null,
+  findable: Uint8Array | null,
   n: number,
 ): void {
   const cnt = h.cellCount;
@@ -103,7 +120,7 @@ export function rebuild(
   // pass 3 cannot scatter it into a run it does not belong to.
   let count = 0;
   for (let i = 0; i < n; i++) {
-    if (alive !== null && alive[i] === 0) continue;
+    if (findable !== null && findable[i] === 0) continue;
     if (count >= cap) {
       h.itemCell[i] = -1;
       h.overflow++;
@@ -127,7 +144,7 @@ export function rebuild(
   // Pass 3: scatter the slot indices into their cell's run. Slots the grid had no
   // room for carry -1 and are skipped, so they cannot land in another cell's run.
   for (let i = 0; i < n; i++) {
-    if (alive !== null && alive[i] === 0) continue;
+    if (findable !== null && findable[i] === 0) continue;
     const c = h.itemCell[i];
     if (c < 0) continue;
     items[cnt[c]++] = i;
@@ -136,7 +153,7 @@ export function rebuild(
 }
 
 /**
- * Indices of live entities within `r` of (px, py), written into `out`; returns
+ * Indices of findable entities within `r` of (px, py), written into `out`; returns
  * how many were written. Hits past `out.length` are dropped and counted in
  * `queryOverflow`, so a full output buffer stays observable.
  *
@@ -148,7 +165,7 @@ export function queryRadius(
   h: SpatialHash,
   x: Float32Array,
   y: Float32Array,
-  alive: Uint8Array | null,
+  findable: Uint8Array | null,
   px: number,
   py: number,
   r: number,
@@ -176,7 +193,7 @@ export function queryRadius(
       const to = h.cellStart[c + 1];
       for (let k = h.cellStart[c]; k < to; k++) {
         const i = h.items[k];
-        if (alive !== null && alive[i] === 0) continue;
+        if (findable !== null && findable[i] === 0) continue;
         const dx = x[i] - px;
         const dy = y[i] - py;
         if (dx * dx + dy * dy > r2) continue;

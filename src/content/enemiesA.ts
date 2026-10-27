@@ -199,6 +199,50 @@ export const ENEMIES_A: readonly EnemyDef[] = [
     accent: '#9B5CFF',
   },
   {
+    id: 'burrower',
+    faction: 'swarm',
+    // The splitter's segmented silhouette at three quarters of its size: low, armoured-looking
+    // and wider than it is tall, which is what a body that comes along the floor rather than
+    // across it needs to read as. Reused rather than newly modelled because the rule is that a
+    // new archetype wears a silhouette the player has already learned to pick out of a crowd.
+    mesh: 'shell',
+    fit: 0.75,
+    // Squishy: the fight is with the *place* it picks, not with the body. Twenty-six HP is a
+    // chaser's, and it is worth seven XP because a player who reads the ring and leaves it has
+    // spent three quarters of a second doing the thing every later chapter asks for.
+    hp: 26,
+    // Slower than a chaser on the floor — it is not meant to catch anyone by walking. Under
+    // the floor it goes at `digSpeed`, which is most of its own mass in one straight line.
+    speed: 4.2,
+    radius: 0.5,
+    armor: 0,
+    xp: 5,
+    ai: 'burrower',
+    // `armRange` is how close it has to be before a trench is worth digging, and
+    // `burstReach` the distance at which it will actually commit to one: outside the burst's
+    // own reach, a line that stops short is a way of not fighting. `digSpeed`/`digTime` are
+    // the trench (5.2 m, one second, unshootable end to end), `digGap` the chase between
+    // digs, `windup` the seconds the ring lies on the floor before the burst lands, and
+    // `burstRadius`/`burstDamage` what lands at the end of it. Documented where
+    // `burrowRunner` reads them, in `systems/enemies/burrowers.ts`.
+    params: {
+      sepRadius: 1.1,
+      sepPush: 1.8,
+      touchRange: 0.3,
+      touchDamage: 6,
+      faceLag: 12,
+      armRange: 8,
+      burstReach: 1.6,
+      burstRadius: 2.4,
+      burstDamage: 20,
+      windup: 0.5,
+      digSpeed: 5.2,
+      digTime: 1.0,
+      digGap: 2.2,
+    },
+    accent: '#FF2E97',
+  },
+  {
     id: 'spawnling',
     faction: 'reactor',
     // The mote silhouette again, at ninety-three hundredths of the size it was drawn for —

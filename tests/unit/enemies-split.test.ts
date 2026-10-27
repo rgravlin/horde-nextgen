@@ -35,9 +35,9 @@ import { Ev, countAlive, countEvents, createWorld, type World } from '../../src/
  *   horde is what shows it.
  *
  * The pinned numbers were taken from `src/sim/systems/enemies.ts` before it was split, by
- * running these fixtures against it, and they are exact on purpose. A failure here means a
- * rule moved rather than that a tolerance needs widening: run the fixture against the code
- * from before your change and see which.
+ * running these fixtures against it, and they are exact on purpose. A failure here means a rule
+ * moved rather than that a tolerance needs widening: run the fixture against the code from
+ * before your change and see which.
  */
 
 /** Put one archetype down by id, at the HP the test needs rather than the default. */
@@ -51,8 +51,8 @@ function place(w: World, id: string, x: number, y: number, hp?: number): number 
  * Play `ticks` of one world and fingerprint it.
  *
  * `fire` and `move` are the only two levers a fixture needs: without them the horde is pure
- * behaviour and nothing dies, with them the kills, the blasts those kills queue and the
- * rounds that caused them are all inside the fingerprint too.
+ * behaviour and nothing dies, with them the kills, the blasts those kills queue and the rounds
+ * that caused them are all inside the fingerprint too.
  */
 function play(w: World, ticks: number, fire = false, move = false): number {
   const f = createInputFrame();
@@ -60,8 +60,8 @@ function play(w: World, ticks: number, fire = false, move = false): number {
     resetFrame(f);
     if (fire) f.fire = true;
     if (move) {
-      // A walk around a square, so bodies arrive from every bearing and the arena clamp and
-      // the cover sweeps both get used, with a dash every so often to spend the i-frames.
+      // A walk around a square, so bodies arrive from every bearing and the arena clamp and the
+      // cover sweeps both get used, with a dash every so often to spend the i-frames.
       const leg = Math.floor(t / 90) % 4;
       f.moveX = leg === 0 ? 1 : leg === 1 ? -1 : leg === 2 ? -1 : 1;
       f.moveY = leg === 0 ? 1 : leg === 1 ? 1 : leg === 2 ? -1 : -1;
@@ -219,42 +219,42 @@ describe('the frozen hordes', () => {
   /**
    * Fingerprints taken from the single-file pass.
    *
-   * `hashWorld` covers positions, velocities, HP, the phase and timer slots, facings, elite
+   * `hashWorld` covers positions, velocities, HP, the phase and timer slots, facels, elite
    * variants, both projectile pools, the rng state and the free lists — everything a
-   * divergence can show up in — so one number per fixture is a whole-run equality rather
-   * than a spot check.
+   * divergence can show up in — so one number per fixture is a whole-run equality rather than
+   * a spot check.
    *
-   * The three that enumerate the table were re-taken when the sniper and the orbiter joined
-   * it, and re-taken again now that the teleporter, the spawner and the spawnling have, for
-   * the same reason: those fixtures put one body down per row, so a row is a change of number
-   * rather than a change of rule. Before this chapter of the roster the table held fifteen
-   * rows and the three fixtures came back 1893471010, 4000957165 and 3895324722; the two new
-   * behaviours sit behind a dispatch key nothing else reads, so a failure *now* still means a
-   * rule moved, and the way to tell is to run the fixture with the new rows left out.
+   * They were re-taken when the burrower joined the table, and with it for a second reason:
+   * the tick now decides who is findable before it rebuilds the grid, and that rule reaches
+   * the thorns pulse, the burst resolver and the burn tick as well as the shots. A failure
+   * here still means a rule moved rather than that a tolerance needs widening; the way to tell
+   * is to run the fixture with the new row left out.
    */
   const FROZEN = {
     /** Every archetype, nothing shooting: 900 ticks of pure behaviour. */
-    quiet: 2958803361,
+    quiet: 826703248,
     /** The same table under fire, so the kills and their blasts are covered too. */
-    fought: 461075619,
+    fought: 3477005370,
     /** The table with a stasis field up, which is where the travel fraction is read. */
-    slowed: 2405504754,
+    slowed: 2749729276,
     /** A hug against a Hot Plate: thorns, armour, and a burst spent in a crowd. */
-    plated: 1410876146,
+    plated: 2942435726,
     /** Chapter four, 1,500 ticks: wave recipes, cover, hazards and an encounter. */
-    chapter: 1874982060,
+    chapter: 1109454232,
   };
 
-  it('is the same quiet horde: eighteen bodies, nobody shooting, nine hundred ticks', () => {
+  it('is the same quiet horde: nineteen bodies, nobody shooting, nine hundred ticks', () => {
     const w = createWorld(0x51de, { arenaHalf: 40 });
     wholeTable(w);
     const h = play(w, 900);
 
-    // Readable first, exact second. The count is past the eighteen that walked in because a
+    // Readable first, exact second. The count is past the nineteen that walked in because a
     // splitter came apart into three splinters and the broodmother and the spawner kept
     // putting young into a room nothing was clearing — the behaviours that make the crowd
-    // bigger than the pack recipe, which is exactly the thing a silent change would break.
-    expect(countAlive(w.enemies)).toBe(33);
+    // bigger than the pack recipe, which is exactly the thing a silent change would break. A
+    // burrower is one of the nineteen and it spends part of every run of this fixture under
+    // the floor, which is the difference these fingerprints now carry.
+    expect(countAlive(w.enemies)).toBe(37);
     expect(h).toBe(FROZEN.quiet);
   });
 
@@ -263,10 +263,11 @@ describe('the frozen hordes', () => {
     wholeTable(w);
     const h = play(w, 900, true, true);
 
-    // Ten left of the eighteen and whatever the crowd grew by, with both kinds of enemy round
-    // in the air and the blast stack spent more than once. This is the fixture that covers the
-    // kill path, because a death is where a shard, a burst and a brood all get queued at once.
-    expect(countAlive(w.enemies)).toBe(9);
+    // Eleven left of the nineteen and whatever the crowd grew by, with both kinds of enemy
+    // round in the air and the blast stack spent more than once. This is the fixture that
+    // covers the kill path, because a death is where a shard, a burst and a brood all get
+    // queued at once.
+    expect(countAlive(w.enemies)).toBe(11);
     expect(h).toBe(FROZEN.fought);
   });
 
@@ -296,11 +297,15 @@ describe('the frozen hordes', () => {
     const h = play(w, 400, false, true);
 
     // Nothing in this fixture fires a player round, and the only other writer of
-    // `Ev.Damage` is a player round in `projectiles.ts`, so every one of these fifteen is a
+    // `Ev.Damage` is a player round in `projectiles.ts`, so every one of these sixteen is a
     // plate pulse spent on a body: the hug happened, the pulse reached it and it went through
-    // armour and finished bodies, which is the path that moved here.
+    // armour and finished bodies, which is the path that moved here. The sixteenth is the
+    // exploder's burst finishing a body the pulse had already wounded, which is what the
+    // findability mask changed: the pulse and the burst now read one snapshot of the grid,
+    // taken at the top of the tick, instead of asking who was alive at two different moments
+    // of it.
     expect(countEvents(w, Ev.Damage)).toBeGreaterThan(0);
-    expect(w.kills).toBe(15);
+    expect(w.kills).toBe(16);
     expect(h).toBe(FROZEN.plated);
   });
 
@@ -319,8 +324,11 @@ describe('the frozen hordes', () => {
 
     // The chapter fixture is the one that runs every system in the tick's real order, waves
     // included, so it is also the one that would notice the enemy pass moving relative to
-    // another. `step.ts` pins that order; this only proves the split kept it.
-    expect(w.kills).toBe(46);
+    // another. `step.ts` pins that order; this only proves the split kept it. Ten more deaths
+    // than the fingerprint this file was written with, for the same one reason: the burst at
+    // the end of a hug is spent against the tick's grid rather than against a second answer to
+    // the same question.
+    expect(w.kills).toBe(56);
     expect(h).toBe(FROZEN.chapter);
   });
 });

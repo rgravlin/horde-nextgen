@@ -11,7 +11,7 @@ import { DT, type World } from '../../world';
 import { travelScale } from '../powerups';
 import { AI } from './behaviours';
 import { contact } from './contact';
-import { advance, eliteOf, scratch } from './shared';
+import { advance, eliteOf, scratch, underground } from './shared';
 
 /**
  * Run every live enemy's behaviour, then let it hit the player.
@@ -19,7 +19,8 @@ import { advance, eliteOf, scratch } from './shared';
  * Also leaves `enemyNear` and `nearest` behind: the closest enemy measured before anything
  * moved, which is what the auto-fire decision reads and where it points. Enemies already
  * at 0 HP are skipped — the damage pass that killed them has already dropped their shard
- * and given the slot back.
+ * and given the slot back — and so are the ones under the floor, which are neither
+ * targetable nor allowed to touch.
  *
  * A staggering body skips its behaviour and rides the shove it was given, which is what
  * makes knockback a positioning tool as well as a number: three ticks of not-steering is
@@ -35,10 +36,16 @@ export function updateEnemies(w: World): void {
     if (enemies.alive[i] === 0) continue;
     if (enemies.hp[i] <= 0) continue;
 
+    // Under the floor, which costs this body two things. It is not the auto-fire's target,
+    // because a gun that woke for something it cannot hit spends its ammo on a hole in the
+    // floor; and it gets no touch, because the alternative is damage with no tell in front of
+    // it. Both read the same `underground` the broad phase's mask is built from.
+    const hidden = underground(enemies.phase[i]);
+
     const dx = player.x - enemies.x[i];
     const dy = player.y - enemies.y[i];
     const d2 = dx * dx + dy * dy;
-    if (d2 < nearest2) {
+    if (!hidden && d2 < nearest2) {
       nearest2 = d2;
       nearestSlot = i;
     }
@@ -67,7 +74,7 @@ export function updateEnemies(w: World): void {
       if (enemies.alive[i] === 0) continue;
     }
 
-    contact(w, def, d2);
+    if (!hidden) contact(w, def, d2);
   }
 
   if (nearestSlot === -1) {

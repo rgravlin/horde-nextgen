@@ -185,8 +185,14 @@ describe('the chapter door', () => {
 
     // And it came as the data says it would, once each, with the bar knowing what it weighs. A
     // chapter may end on more than one body; it may not end on the same body twice.
-    expect(first.kinds).toEqual([...first.level.bosses]);
-    expect(last.kinds).toEqual([...last.level.bosses]);
+    //
+    // Compared as a set rather than in order, and that is deliberate: `bossBodies` walks the
+    // enemy pool, so the order it reports is the order the three happened to take slots in,
+    // which depends on which slots the escort had already handed back. What the chapter declares
+    // is *which* bodies it ends on and that none of them repeats, and both of those survive
+    // here; what it never claimed was a seat order.
+    expect([...first.kinds].sort()).toEqual([...first.level.bosses].sort());
+    expect([...last.kinds].sort()).toEqual([...last.level.bosses].sort());
     expect(last.kinds).toHaveLength(3);
     expect(first.phaseAtArrival).toBe(Phase.Encounter);
     expect(last.phaseAtArrival).toBe(Phase.Encounter);

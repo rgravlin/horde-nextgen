@@ -31,6 +31,12 @@ export type Faction = 'swarm' | 'foundry' | 'reactor' | 'cult';
  * its approach in a tick instead of along it (`systems/enemies/phaser.ts`) and one does all
  * its damage through bodies it adds rather than through itself
  * (`systems/enemies/nursery.ts`). Both live in `enemiesA.ts` with the marks.
+ *
+ * `burrower` breaks it the same way and is the third file of that pair
+ * (`systems/enemies/burrowers.ts`): it crosses its last few metres under the floor, which is
+ * the one behaviour that needs the broad phase's findability mask, since a body that is
+ * travelling where no shot can reach it is untargetable by data rather than by a special case
+ * bolted onto each weapon.
  */
 export const AI_IDS = [
   'chaser',
@@ -46,6 +52,7 @@ export const AI_IDS = [
   'orbiter',
   'teleporter',
   'spawner',
+  'burrower',
   'brute',
   'brooder',
   'matron',
@@ -144,16 +151,24 @@ export interface EnemyDef {
  * the other way: a teleporter is answered by the charger's lesson (step off the line it
  * paints) and a spawner by the splitter's (kill it away from the crowd, and kill it before
  * the crowd it makes arrives), so both want a player who has already met the body they
- * twist. Where a row lists one of them it sits behind the pack's guns rather than in front.
+ * twist. The burrower joins them there for the same reason of its own: it asks for the same
+ * answer as the two marks — leave the place it is aiming at, and leave it early — which a
+ * player has only been taught once wave 4. Where a row lists one of them it sits behind the
+ * pack's guns rather than in front.
+ *
+ * It goes in by *replacing* a repeat rather than by lengthening a row, and that is a rule
+ * rather than a whim: the drumbeat walks one cursor down the row, so a row that grows shifts
+ * every archetype behind the change and the chapter stops delivering bodies its recipe names.
+ * Only a body the row still lists twice is safe to spend.
  */
 export const PACKS: readonly (readonly string[])[] = [
   // Two bodies that walk at you, then the first thing that does not.
   ['chaser', 'swarmling', 'chaser', 'swarmling', 'charger'],
   ['swarmling', 'chaser', 'charger', 'exploder', 'chaser'],
   ['charger', 'swarmling', 'exploder', 'shooter', 'chaser', 'splitter'],
-  ['charger', 'exploder', 'armored', 'shooter', 'sniper', 'splitter', 'grenadier', 'orbiter', 'teleporter', 'spawner'],
-  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'sniper', 'teleporter', 'exploder', 'orbiter', 'spawner'],
-  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'sniper', 'teleporter', 'charger', 'armored', 'shooter', 'grenadier', 'healer', 'orbiter', 'spawner'],
+  ['charger', 'burrower', 'armored', 'shooter', 'sniper', 'splitter', 'grenadier', 'orbiter', 'teleporter', 'spawner'],
+  ['exploder', 'armored', 'splitter', 'charger', 'grenadier', 'healer', 'sniper', 'teleporter', 'burrower', 'orbiter', 'spawner'],
+  ['splitter', 'charger', 'armored', 'exploder', 'swarmling', 'sniper', 'teleporter', 'burrower', 'armored', 'shooter', 'grenadier', 'healer', 'orbiter', 'spawner'],
 ];
 
 /** The only archetype the wave spawner falls back to if a recipe names nothing else. */

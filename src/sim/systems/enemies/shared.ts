@@ -23,7 +23,58 @@ const SEP_CAP = 24;
  * hit gives it are two facts that have to survive each other: a charger knocked out of its
  * wind-up is still a charger in a wind-up, it is just reeling.
  */
-export const Phase = { Seek: 0, Windup: 1, Dash: 2, Recover: 3, Fuse: 4, Orbit: 5 } as const;
+export const Phase = {
+  Seek: 0,
+  Windup: 1,
+  Dash: 2,
+  Recover: 3,
+  Fuse: 4,
+  Orbit: 5,
+  /** Under the floor, moving: see `systems/enemies/burrowers.ts`. */
+  Burrowed: 6,
+  /** Up, planted, ring filling. */
+  Breach: 7,
+} as const;
+
+/**
+ * The phase a body spends under the floor.
+ *
+ * Two things read it, and they have to give the same answer: nothing may find a body in it
+ * (which is what the tick's findability mask is built from) and it may not touch the player
+ * out of it, so "untargetable" never means "free damage". Everywhere else the phase slot is a
+ * mood; here it is a place.
+ *
+ * `Breach` is deliberately *not* one of them. The half-second a burrower spends planted with
+ * its ring filling is the window that fight is won in — the tell and the kill window are the
+ * same window — so it is on the floor and hittable by then, and only the travel underneath
+ * is not.
+ */
+export function underground(phase: number): boolean {
+  return phase === Phase.Burrowed;
+}
+
+/**
+ * Refill the broad phase's findability mask before the grid is rebuilt from it.
+ *
+ * One pass over the pool, written from the phase slot and read by `rebuild` and by every
+ * `queryRadius` in the tick, which is the whole reason "a shot cannot hit what it cannot see"
+ * is one rule rather than thirteen: a body under the floor is not in the grid, so the hitscan
+ * march, the chain jump, the melee sweep, the flying round's segment test, the drone's target
+ * scan, the thorns pulse and the burst resolver all miss it on the same one fact. The two
+ * passes that skip the grid — the burn tick and the floor's acid — read `underground`
+ * directly for the same reason.
+ *
+ * A derived index, not a second source of truth: phase is the fact and this is its per-tick
+ * index, which is why it is not saved (see `serialize.ts`) and why nothing has to remember to
+ * clear it.
+ */
+export function markFindable(w: World): void {
+  const enemies = w.enemies;
+  const findable = w.hash.findable;
+  for (let i = 0; i < enemies.cap; i++) {
+    findable[i] = enemies.alive[i] !== 0 && !underground(enemies.phase[i]) ? 1 : 0;
+  }
+}
 
 /** The golden angle, in radians. See `spawnEnemy` and `killEnemy` for what it does. */
 export const GOLDEN_ANGLE = 2.399_963_229_728_653;
@@ -93,7 +144,7 @@ export function drive(w: World, i: number, def: EnemyDef, vx: number, vy: number
     w.hash,
     enemies.x,
     enemies.y,
-    enemies.alive,
+    w.hash.findable,
     enemies.x[i],
     enemies.y[i],
     sepRadius,

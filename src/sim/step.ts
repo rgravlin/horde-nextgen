@@ -14,7 +14,7 @@ import { queryRadius, rebuild } from './spatialHash';
 import { canTravel } from './systems/obstacles';
 import { updateBoss } from './systems/boss';
 import { updateDrone } from './systems/drone';
-import { resolveBlasts, updateEnemies } from './systems/enemies';
+import { markFindable, resolveBlasts, updateEnemies } from './systems/enemies';
 import { updateEnemyProjectiles } from './systems/enemyProjectiles';
 import { updateHazards } from './systems/levels';
 import { choosePick, updateChests, updatePickups } from './systems/pickups';
@@ -72,7 +72,13 @@ export function step(world: World, frame: InputFrame): void {
   updatePlayer(world, frame);
   updateHazards(world);
   updateBoss(world);
-  rebuild(world.hash, world.enemies.x, world.enemies.y, world.enemies.alive, world.enemies.cap);
+  // Who may be found, then who is where. Both are rebuilt every tick from the phase slot
+  // rather than kept up to date, so the two halves of the broad phase cannot drift: the mask
+  // is what `rebuild` indexes and what every `queryRadius` below filters on, and a body under
+  // the floor is in neither. Filled *after* the chapter pass because that pass is the one
+  // that adds bodies, and a boss missing the grid for a tick is a boss nothing can shoot.
+  markFindable(world);
+  rebuild(world.hash, world.enemies.x, world.enemies.y, world.hash.findable, world.enemies.cap);
 
   if (world.over) return;
 
@@ -249,13 +255,16 @@ function startDash(world: World, moveLen: number, moveX: number, moveY: number):
  * Broad-phase helper for the later systems: fill `world.query` with enemy slot
  * indices near (px, py) and return how many. Callers must finish using the
  * result before the next query in the same tick, since they share one buffer.
+ *
+ * Filtered by the tick's findability mask rather than by `alive`, so a helper asked
+ * about a body that is under the floor answers "nobody", like every weapon does.
  */
 export function queryEnemies(world: World, px: number, py: number, r: number): number {
   return queryRadius(
     world.hash,
     world.enemies.x,
     world.enemies.y,
-    world.enemies.alive,
+    world.hash.findable,
     px,
     py,
     r,

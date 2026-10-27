@@ -86,7 +86,7 @@ export function updateDrone(w: World): void {
     w.hash,
     enemies.x,
     enemies.y,
-    enemies.alive,
+    w.hash.findable,
     player.x,
     player.y,
     REACH,

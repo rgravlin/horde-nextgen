@@ -34,7 +34,7 @@ export function mendAura(w: World, i: number, def: EnemyDef): boolean {
     w.hash,
     enemies.x,
     enemies.y,
-    enemies.alive,
+    w.hash.findable,
     enemies.x[i],
     enemies.y[i],
     def.params.healRange,

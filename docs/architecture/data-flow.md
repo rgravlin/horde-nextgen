@@ -24,13 +24,23 @@ DOM events + a polled pad ─▶ InputSampler ──(once per tick)──▶ Inp
   stick only while that stick is out of its dead zone, and a pad button can set a flag but never clear a key's.
   A pad-driven frame is therefore still one `InputFrame`, and `tests/unit/gamepad.test.ts` drives it — and three
   frames of `step()` — against a plain object shaped like a `Gamepad`, with no browser and no controller.
-- `step` order is fixed and listed in `step.ts`: timers → player move/dash → broad-phase rebuild (spatial hash,
-  cell 2) → enemy AI, contact damage and the rounds they begin → weapon fire, projectile flight and hits → blast
-  resolution → enemy-round flight and hits → the level-up pick → pickups/XP → wave spawns. The grid is built before
-  the passes that query it, and a kill is resolved where the damage lands, so a corpse never spends a tick blocking
-  the crowd or soaking a piercing shot. Enemy rounds fly in their own pass, after the player's: a body that is killed
-  mid-tick still spends the round it had already begun (the shot exists independently of its shooter), and the two
-  delivery passes each query the grid without disturbing what the other is iterating.
+- `step` order is fixed and listed in `step.ts`: timers → player move/dash → the findability mask and the
+  broad-phase rebuild (spatial hash, cell 2) → enemy AI, contact damage and the rounds they begin → the drone
+  companion → weapon fire, projectile flight and hits → blast resolution → enemy-round flight and hits → the
+  level-up pick → pickups/XP → wave spawns. The grid is built before the passes that query it, and a kill is
+  resolved where the damage lands, so a corpse never spends a tick blocking the crowd or soaking a piercing shot.
+  Enemy rounds fly in their own pass, after the player's: a body that is killed mid-tick still spends the round it
+  had already begun (the shot exists independently of its shooter), and the two delivery passes each query the grid
+  without disturbing what the other is iterating.
+- **Who may be found is decided once, at the top of the tick.** `markFindable` refills `hash.findable` from the
+  phase slot and that byte array is what `rebuild` indexes and what every `queryRadius` in the tick filters on —
+  the hitscan march, the chain jump, the melee arc, a flying round's segment test, the drone's target scan, the
+  thorns pulse and the burst resolver all read the same buffer. That is what makes "a shot cannot hit what it
+  cannot see" one rule instead of thirteen: a burrower under the floor is simply not in the grid, and the two
+  passes that skip the grid (the burn tick and the chapter's acid) ask `underground(phase)` for the same answer.
+  The mask is a per-tick snapshot derived from the phase slot, not a second source of truth, so it is never saved
+  and nothing has to remember to clear it; the same rule denies a hidden body its own touch, which is why
+  untargetable is never the same thing as free damage.
 - Delivery lives one folder away from the trigger: `systems/weapons.ts` owns the hand, the cooldown, the magazine, the
   two gauges, the draw and the aim, and hands the shot to `systems/projectiles/`, which owns everything after the
   trigger — the swept-segment test for a round, the march for a ray and the beam, the arc of a sweep, the jumps of a

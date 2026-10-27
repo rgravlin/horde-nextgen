@@ -88,7 +88,7 @@ function thornsPulse(w: World, thorns: number): void {
     w.hash,
     enemies.x,
     enemies.y,
-    enemies.alive,
+    w.hash.findable,
     w.player.x,
     w.player.y,
     THORNS_REACH,

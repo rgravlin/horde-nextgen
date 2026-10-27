@@ -26,7 +26,7 @@ import { levelAt } from '../../content/levels';
 import { acidAt, installLayout, installZones, pointBlocked, pushOut, pushedX, pushedY, tickZones } from './obstacles';
 import { DT, Ev, Tele, TUNE, pushEvent, setArena, type World } from '../world';
 import { hurtPlayer } from './enemyProjectiles';
-import { killEnemy, queueBlast } from './enemies';
+import { killEnemy, queueBlast, underground } from './enemies';
 import { startWaves, stopWaves } from './waves';
 
 /**
@@ -214,6 +214,9 @@ function tickHazards(w: World): void {
   const enemies = w.enemies;
   for (let i = 0; i < enemies.cap; i++) {
     if (enemies.alive[i] === 0 || enemies.hp[i] <= 0) continue;
+    // A body under the floor is not standing in the acid above it, any more than a shot can
+    // reach it down there. Same rule the burn tick uses.
+    if (underground(enemies.phase[i])) continue;
     const cost = acidAt(zones, enemies.x[i], enemies.y[i]);
     if (cost <= 0) continue;
     enemies.hp[i] -= cost * DT;

@@ -44,7 +44,7 @@ export function sweepMelee(
     w.hash,
     enemies.x,
     enemies.y,
-    enemies.alive,
+    w.hash.findable,
     px,
     py,
     def.range + HIT_PAD,

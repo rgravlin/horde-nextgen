@@ -81,7 +81,7 @@ function march(
       w.hash,
       enemies.x,
       enemies.y,
-      enemies.alive,
+      w.hash.findable,
       ox + dirx * travelled,
       oy + diry * travelled,
       reach,
@@ -183,7 +183,7 @@ export function castChain(w: World, def: WeaponDef, x: number, y: number): numbe
     // The first hop reaches the whole acquisition radius from the muzzle; after that
     // the bolt only has to find a body within one jump of the last one.
     const r = hop === 0 ? def.range : jump;
-    const found = queryRadius(w.hash, enemies.x, enemies.y, enemies.alive, cx, cy, r, query);
+    const found = queryRadius(w.hash, enemies.x, enemies.y, w.hash.findable, cx, cy, r, query);
 
     let next = -1;
     let best2 = Infinity;

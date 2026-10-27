@@ -155,7 +155,7 @@ export function resolveBlasts(w: World): void {
       w.hash,
       enemies.x,
       enemies.y,
-      enemies.alive,
+      w.hash.findable,
       x,
       y,
       r + TUNE.shotRadius,

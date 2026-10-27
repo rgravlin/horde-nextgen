@@ -46,7 +46,7 @@ function burst(w: World, def: WeaponDef, weapon: number, x: number, y: number, f
   const enemies = w.enemies;
   const query = w.query;
   const base = def.dmg * w.stats.dmg;
-  const found = queryRadius(w.hash, enemies.x, enemies.y, enemies.alive, x, y, r + HIT_PAD, query);
+  const found = queryRadius(w.hash, enemies.x, enemies.y, w.hash.findable, x, y, r + HIT_PAD, query);
 
   for (let k = 0; k < found; k++) {
     const j = query[k];
@@ -85,7 +85,7 @@ function drag(w: World, def: WeaponDef, x: number, y: number): void {
   if (r <= 0 || speed <= 0) return;
 
   const enemies = w.enemies;
-  const found = queryRadius(w.hash, enemies.x, enemies.y, enemies.alive, x, y, r + HIT_PAD, w.query);
+  const found = queryRadius(w.hash, enemies.x, enemies.y, w.hash.findable, x, y, r + HIT_PAD, w.query);
   const step = speed * DT;
 
   for (let k = 0; k < found; k++) {
@@ -142,7 +142,7 @@ function steer(w: World, i: number, maxTurn: number): void {
     w.hash,
     enemies.x,
     enemies.y,
-    enemies.alive,
+    w.hash.findable,
     x,
     y,
     SEEK_RADIUS,
@@ -281,7 +281,7 @@ export function updateProjectiles(w: World): void {
       w.hash,
       enemies.x,
       enemies.y,
-      enemies.alive,
+      w.hash.findable,
       (x0 + x1) * 0.5,
       (y0 + y1) * 0.5,
       sweep * 0.5 + HIT_PAD,
