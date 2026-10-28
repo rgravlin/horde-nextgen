@@ -56,7 +56,9 @@ and content additions are one data entry plus a mesh or behaviour only when genu
 2. No per-tick allocation: no closures, `.map`/`.filter`, or new objects inside `step`. Pools with the caps in
    `src/sim/constants.ts` (enemies 2048, projectiles 2048, enemy projectiles 512, shards 1024) and `src/sim/fx.ts`
    (the particle ring holds 8192). Render-side: four palette batches of the tier's `particles` budget each
-   (512/1024/2048/4096), damage numbers 128, pooled lamps 0/8/16/16 — all keyed off `src/render/quality.ts`.
+   (512/1024/2048/4096), damage numbers 128, pooled lamps 0/8/16/16 — all keyed off `src/render/quality.ts` — plus
+   the two supply-crate batches, which are cut to `POOL_CAPS.chests` (24) because a crate is a *somewhere* rather
+   than a *somebody*.
 3. Determinism: same seed + same input log → same `hashWorld(world)` (FNV-1a over the pools).
 4. GPU paths (compute particles, bloom, shadows) are cosmetic. If a GPU call fails, fall back to the CPU path;
    gameplay and the HUD must be unaffected.

@@ -20,12 +20,13 @@
  * - `shapesC.ts` — the three bodies that break the walking default (teleporter, burrower,
  *   spawner), keyed by archetype because their shape carries the behaviour. Spread into
  *   `SHAPES`, so they come through `hordeMesh` like every other recipe.
- * - `props.ts` — the projectiles, the player's kit-bash and the flat shapes a telegraph uses.
+ * - `props.ts` — the projectiles, the supply crate and its beacon, the player's kit-bash and
+ *   the flat shapes a telegraph uses.
  * - `materials.ts` — the three materials, and what the two per-instance attributes do to them.
  *
  * Outside the folder the public surface is what this file re-exports, and it is the same list
- * the single `meshes.ts` used to have: `instancing.ts`, `telegraphs.ts` and `renderer.ts` all
- * keep importing `./meshes`.
+ * the single `meshes.ts` used to have: `instancing.ts`, `chests.ts`, `telegraphs.ts` and
+ * `renderer.ts` all keep importing `./meshes`.
  */
 
 export type { HordeMesh } from './primitives';
@@ -33,6 +34,8 @@ export { triangleCount } from './primitives';
 export { hordeMesh } from './shapes';
 export {
   arrowGeometry,
+  beaconGeometry,
+  chestGeometry,
   discGeometry,
   ghostGeometry,
   grenadeGeometry,

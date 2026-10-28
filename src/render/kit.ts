@@ -1,17 +1,18 @@
 /**
  * The kit: everything drawn out of one World's pools.
  *
- * The horde, the rounds, the shards, the hazard discs, the cover and the warning shapes are
- * built together here because they share one lifetime. A restart builds a new World with new
- * pools, so the layers have to be rebuilt against it — and the old set has to leave the scene
- * and give its buffers back, because a run restarted twenty times should not pay for twenty
- * arenas. That pair of facts is why this file exists rather than six calls scattered through
- * `renderer.ts`: build and dispose are one decision, and only one of them has an obvious place
- * to live.
+ * The horde, the rounds, the shards, the hazard discs, the cover, the crates and the warning
+ * shapes are built together here because they share one lifetime. A restart builds a new World
+ * with new pools, so the layers have to be rebuilt against it — and the old set has to leave the
+ * scene and give its buffers back, because a run restarted twenty times should not pay for
+ * twenty arenas. That pair of facts is why this file exists rather than six calls scattered
+ * through `renderer.ts`: build and dispose are one decision, and only one of them has an obvious
+ * place to live.
  *
  * Order inside the kit is load-bearing and lives here for that reason: cover before the horde so
- * the crowd reads against it, and the two flat layers (hazard discs, telegraphs) last, because a
- * warning drawn under a body is a warning nobody sees.
+ * the crowd reads against it, the crates after the crowd so a pickup is not hidden by it, and
+ * the two flat layers (hazard discs, telegraphs) last, because a warning drawn under a body is a
+ * warning nobody sees.
  *
  * Everything in here reads the pools and writes geometry. It never writes a game value back
  * (ARCHITECTURE.md "Data flow").
@@ -22,6 +23,7 @@ import { Group, type Scene } from 'three/webgpu';
 import type { World } from '../sim/world';
 
 import { createPropView, type Assets, type PropView } from './assets';
+import { createChestView, type ChestView } from './chests';
 import { createBatches, type Batches } from './instancing';
 import { createParticles, type ParticleMode, type ParticleView } from './particles';
 import type { Quality, TierProfile } from './quality';
@@ -37,6 +39,7 @@ export interface Kit {
   readonly props: PropView;
   readonly hazards: SceneryView;
   readonly batches: Batches;
+  readonly chests: ChestView;
   readonly telegraphs: TelegraphView;
   /** Null when the budget is nil, which is a setting rather than a tier. */
   readonly particles: ParticleView | null;
@@ -63,11 +66,13 @@ export function buildKit(
   parent.add(group);
   return {
     world,
-    // Cover before the horde so the crowd reads against it, and the two flat layers last: a
-    // warning drawn under a body is a warning nobody sees.
+    // Cover before the horde so the crowd reads against it, the crates after it because a
+    // pickup has to read against the crowd, and the two flat layers last: a warning drawn under
+    // a body is a warning nobody sees.
     props: createPropView(group, assets, quality),
     hazards: createSceneryView(group, world),
     batches: createBatches(group, world, quality),
+    chests: createChestView(group, world),
     telegraphs: createTelegraphView(group),
     // A nil budget leaves the field unbuilt rather than built empty: four batches of zero
     // instances are four buffers and four draw calls paid for nothing.
@@ -110,6 +115,7 @@ export function syncKit(kit: Kit, world: World, alpha: number, dt: number): void
   kit.props.sync(world);
   kit.hazards.sync(world);
   kit.batches.sync(world, alpha, dt);
+  kit.chests.sync(world);
   kit.telegraphs.sync(world, dt);
   kit.particles?.sync(world.fx);
 }

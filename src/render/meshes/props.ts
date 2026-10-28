@@ -1,9 +1,10 @@
 /**
- * Everything the horde does not wear: the projectiles, the player's kit-bash and the flat
- * shapes a telegraph is drawn with.
+ * Everything the horde does not wear: the projectiles, the supply crate and its beacon, the
+ * player's kit-bash and the flat shapes a telegraph is drawn with.
  *
  * These are built once per page too, but they need no cache — one batch each, made in
- * `instancing.ts` and `telegraphs.ts`, so a builder here just returns a fresh geometry.
+ * `instancing.ts`, `chests.ts` and `telegraphs.ts`, so a builder here just returns a fresh
+ * geometry.
  */
 
 import {
@@ -77,6 +78,75 @@ export function grenadeGeometry(): BufferGeometry {
 /** An XP shard: a faceted crystal, flat-shaded and violet (DESIGN.md "Palette"). */
 export function shardGeometry(): BufferGeometry {
   const geometry = new OctahedronGeometry(0.5, 0).scale(0.7, 1.3, 0.7);
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/* ── The supply crate ──────────────────────────────────────────────────────────── */
+
+/**
+ * A supply crate: a hooped box with strapped corners and a beacon nub on the lid.
+ *
+ * The crate is the one thing on the floor the player is *asked to walk to*, so it is drawn in
+ * Hazard amber — the hue the radar dot and the edge marker already spend on a crate — and as a
+ * solid rather than a glow: a reward has to look like a thing sitting in the room, and the
+ * pillar over it (`beaconGeometry`) is where the light goes. Amber at a gain under the bloom
+ * threshold for the same reason `scenery.ts` keeps its hazard tape under it: this is a warning
+ * colour worn by a pickup, not a lamp.
+ *
+ * Authored at the size one is drawn (0.62 m across, 0.7 m to the top of the nub) with its feet
+ * at y = 0, so the batch only has to scale its instances.
+ */
+export function chestGeometry(): BufferGeometry {
+  // Four corner straps, one per quarter: they stand 0.02 m proud of the box, which is what
+  // gives the silhouette notches at the corners — a plain cube at 20 m reads as a puddle.
+  const straps: BufferGeometry[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      straps.push(flat(boxSegment(0.1, 0.5, 0.1).translate(sx * 0.26, 0.25, sz * 0.26)));
+    }
+  }
+
+  const geometry = mergeGeometries(
+    [
+      flat(boxSegment(0.58, 0.44, 0.58).translate(0, 0.22, 0)),
+      flat(boxSegment(0.64, 0.1, 0.64).translate(0, 0.2, 0)),
+      flat(boxSegment(0.62, 0.09, 0.62).translate(0, 0.475, 0)),
+      ...straps,
+      flat(new OctahedronGeometry(0.11).translate(0, 0.6, 0)),
+    ],
+    false,
+  );
+  if (geometry === null) throw new Error('meshes: chest merge failed');
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/**
+ * The beacon: the column of light standing over a crate, drawn additively.
+ *
+ * Three parts, one geometry, because it is one draw: a wide thin disc lying on the floor so
+ * the crate reads from directly above, a tapered outer column and a narrower core inside it.
+ * The core is what makes it read as light rather than as a glass post — where the two shells
+ * overlap the additive blend sums twice, which is the hot centre.
+ *
+ * A column rather than a camera-facing quad for the reason `particles.ts` gives for its blobs:
+ * a quad has to be turned to the eye every frame to read as anything, and at the camera's 55°
+ * pitch a quad laid over the crate is seen almost edge-on. A solid column says the same thing
+ * from every angle for no per-instance rotation.
+ *
+ * Its lowest vertices are at y = 0 too, so both halves of the read stand on the floor.
+ */
+export function beaconGeometry(): BufferGeometry {
+  const geometry = mergeGeometries(
+    [
+      flat(new CircleGeometry(0.55, 10).rotateX(-Math.PI / 2).translate(0, 0.015, 0)),
+      flat(new CylinderGeometry(0.15, 0.34, 2.5, 8).translate(0, 1.25, 0)),
+      flat(new CylinderGeometry(0.06, 0.13, 2.9, 6).translate(0, 1.45, 0)),
+    ],
+    false,
+  );
+  if (geometry === null) throw new Error('meshes: beacon merge failed');
   geometry.computeBoundingSphere();
   return geometry;
 }
