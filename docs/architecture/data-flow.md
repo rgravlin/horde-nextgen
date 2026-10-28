@@ -144,7 +144,13 @@ The points below are load-bearing rather than incidental, so they are recorded h
 plus the shell read through a `StateHost` (`scene`, `backend`, `mode`, `errors`, the frame-time ring) — stable key
 set per TECH.md, ≤10 nearest enemies, no pool references leaked. Two keys are read off the *drawing* rather than
 out of the World, because the drawing is the thing being checked: `player.barrel` through `View.playerFace` and
-`drone.drawn` through `View.dronePoint`. `window.__forgeDebug` (`setSeed`, `spawn`, `grantXp`, `giveWeapon`,
+`drone.drawn` through `View.dronePoint`. `drone` is that second fact as a pair — `orbit` struck off `droneOrbit`,
+`drawn` (and `shown`) read back off the rig — because a `drawn` echoed out of the orbit agrees with itself on every
+frame, including the one where nothing drew the companion; with no `View` at all the pair answers *no place* rather
+than echoing the orbit. The `ward drone` scenario in `forge-scenarios.json` is what reads that pair from outside the
+page: its three `state` stops compare `drone.shown` and `drone.drawn.h` beside `powerups.length`, `enemies.count`
+and `errors`, and it comes by the companion by walking onto chapter 1's crate rather than through `givePowerup`, so
+the route is played and not staged. `window.__forgeDebug` (`setSeed`, `spawn`, `grantXp`, `giveWeapon`,
 `givePowerup`, `bench`) is `createDebug` in `src/game/appDebug.ts`, and it takes the live `World` from its
 host — a bench window arms a new run, so the bodies have to go into the world that restart made. Both route
 through `step`-side APIs only, so scenario results stay reproducible. Caught errors increment `errors` instead of

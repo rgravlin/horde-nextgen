@@ -411,8 +411,11 @@ floor.
   `loadSlot` the gun, step it and read the pools) and a step in `tests/e2e/weapons-a.spec.ts` or
   `weapons-b.spec.ts` for the grant path, read back through `__forgeState()` as `heat` /
   `venting` / `energy` per hand — `forge-scenarios.json` has no step that evaluates JavaScript
-  (its vocabulary is click, fill, press, wait, hold, mouse, shot, state) and no key grants a
-  weapon.
+  (its vocabulary is click, fill, press, wait, hold, mouse, shot, state, one key per step, and a
+  `state` step can only compare what `__forgeState()` already answers) and no key grants a
+  weapon. Hence the split: a *grant* gets pinned in a spec, where a script can call the door,
+  while a *route* to something gets scripted — see the ward drone's walk below, which reaches its
+  card with held keys and reads `drone.shown` back.
 
 ### Adding an enemy — `src/content/enemies.ts` (+ `enemiesA.ts`), read by `src/sim/systems/enemies/`
 
@@ -492,6 +495,19 @@ names a card has to hand that card over, and a run that never walks to the crate
 without it. A crate is the shape to use for anything that should be findable rather than dealt —
 `TUNE.chestChance` marks a pack with a crate a quarter of the time and the roll inside it is a
 second coin, so a card left to those two is one most runs never meet.
+
+That route is also scripted in the browser, as the ward drone scenario in
+`forge-scenarios.json`: a staircase of `hold` steps that holds the crate's own 14:10 east:south
+bearing whatever clock the page runs on — a route tuned to one machine's frame rate is a coin flip
+on another's — then a four-side circuit that carries the companion's ring round its bearings, with
+three `state` stops reading `powerups.length`, `drone.shown` and `drone.drawn.h`. It grants
+nothing: no `click`, no `fill`, no `__forgeDebug`, so the card has to be picked up, and
+`tests/unit/scenarioDrone.test.ts` replays that keyboard through `step` at 0.55x, 0.75x, 1x and
+1.25x real time, with a crate-less control that has to fail. Note what a `state` stop can see: a
+scenario only ever looks at the game through `__forgeState()`, so the keys it needs are part of
+what a mechanic owes. `drone` therefore answers `shown` / `orbit` / `drawn`, and `drawn` is
+measured off the rig rather than echoed from `drone.orbit` — a scenario comparing an echoed half
+could not tell a drawn companion from a number, which is the whole reason the pair exists.
 
 ### Adding a level — `src/content/levels/`, read by `src/sim/systems/levels.ts`
 
