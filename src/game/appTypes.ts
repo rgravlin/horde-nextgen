@@ -184,11 +184,20 @@ export interface ForgeDebug {
   grantXp(n: number): void;
   giveWeapon(id: string): boolean;
   /**
-   * Put a card on the run through the sim's own grant, which is what also raises the stat a rig
-   * and the HUD read. A scenario needs the door because the three cards on offer are dealt at
-   * random, so a companion to test is not something a step list can bet on being handed.
+   * Put card `id` on the run at tier `tier`, through the sim's own grant, which is what also
+   * raises the stat a rig and the HUD read.
+   *
+   * A scenario needs the door because the three cards on offer are dealt at random, so a
+   * companion to test is not something a step list can bet on being handed. It takes the tier
+   * because a card's effect is only measurable at one: the ward drone's rounds-a-volley *is* its
+   * tier, so a door that could hand out one copy could set a companion up but not a difference.
+   *
+   * False, and the run untouched, when there is no such card, when `tier` is not a whole number
+   * of at least one, or when the run already holds at least that much of the card. A grant that
+   * landed part-way is a different run from the one that was asked for, with a `true` on top of
+   * it, which is worse than no grant.
    */
-  givePowerup(id: string): boolean;
+  givePowerup(id: string, tier: number): boolean;
   /**
    * Start a bench window at horde size `n` (`?bench=N` gets here straight off the URL).
    *

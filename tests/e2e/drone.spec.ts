@@ -77,7 +77,7 @@ type State = {
 
 type AnyWindow = {
   __forgeState?: () => State;
-  __forgeDebug?: { givePowerup(id: string): boolean };
+  __forgeDebug?: { givePowerup(id: string, tier: number): boolean };
 };
 
 function readState(page: Page): Promise<State | undefined> {
@@ -207,9 +207,10 @@ test('the companion is drawn, on his ring, and rides with a player who walks awa
 
   // The card, through the shell's own grant door rather than by waiting to be dealt one: the
   // level-up offer is three cards drawn at random, so a spec that hoped for the companion could
-  // not say which run it had been looking at.
+  // not say which run it had been looking at. Tier 1 is enough to draw him, and is the tier the
+  // control run below goes without.
   const granted = await page.evaluate(() =>
-    (window as unknown as AnyWindow).__forgeDebug?.givePowerup('drone') ?? false,
+    (window as unknown as AnyWindow).__forgeDebug?.givePowerup('drone', 1) ?? false,
   );
   expect(granted, 'the ward drone card is grantable').toBe(true);
 

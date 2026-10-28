@@ -96,15 +96,31 @@ export function createDebug(host: DebugHost): ForgeDebug {
       return true;
     },
 
-    // Put a card on the run the way the level-up table would, through the sim's own grant, so the
-    // stat the rig and the HUD read rises with it. The door exists because the three cards on
-    // offer are dealt at random: a scenario that wants the ward drone cannot bet on being handed
-    // it, and a step list can only press keys. An unknown id, or a card already at its ceiling,
-    // answers false rather than pretending.
-    givePowerup(id) {
+    // Put a card on the run at tier `tier` the way the level-up table would, through the sim's own
+    // grant, so the stat the rig and the HUD read rises with it. The door exists because the three
+    // cards on offer are dealt at random: a scenario that wants the ward drone cannot bet on being
+    // handed it, and a step list can only press keys. The tier is asked for rather than assumed
+    // because a card is only comparable at one — the companion's rounds a volley *is* its tier —
+    // and the whole request is answered at once: an unknown id, a tier that is not a whole number,
+    // and one the run already holds or that tops the card's ceiling all refuse with the run as it
+    // was. Same terms as `giveWeapon`, and for the same reason: part of a grant is a different run
+    // than the one that was asked for.
+    givePowerup(id, tier) {
       const w = host.world();
       const index = POWERUPS.findIndex((def) => def.id === id);
-      return grantPowerup(w, index);
+      if (index < 0) return false;
+      const def = POWERUPS[index];
+      const held = w.powerTiers[index];
+      // `tier <= held` also refuses 0 and everything negative, and `Number.isInteger` catches the
+      // fractions and the infinities a `page.evaluate` can hand over: each of them would otherwise
+      // walk out of this function reporting a grant that put nothing on the run.
+      if (!Number.isInteger(tier) || tier > def.maxTier || tier <= held) return false;
+      // One `grantPowerup` per step rather than a write of the tier, so the door's run and the
+      // same number of level-up picks are the same run: same fold, same timed dose at the new
+      // tier, same clocks. Every step sits under the ceiling by the check above, so none of them
+      // can be refused on the way.
+      for (let t = held; t < tier; t++) grantPowerup(w, index);
+      return true;
     },
 
     /**
