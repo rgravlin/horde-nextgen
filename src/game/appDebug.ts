@@ -13,11 +13,12 @@
 
 import { ENEMIES } from '../content/enemies';
 import { LEVELS } from '../content/levels';
+import { POWERUPS } from '../content/powerups';
 import { WEAPONS } from '../content/weapons';
 import type { InputFrame } from '../sim/input';
 import { createRng, next } from '../sim/rng';
 import { spawnEnemy } from '../sim/systems/enemies';
-import { awardXp } from '../sim/systems/pickups';
+import { awardXp, grantPowerup } from '../sim/systems/pickups';
 import { loadSlot, type World } from '../sim/world';
 import { createBenchRig, type BenchRig } from './bench';
 import type { ForgeDebug } from './appTypes';
@@ -93,6 +94,17 @@ export function createDebug(host: DebugHost): ForgeDebug {
       loadSlot(hand, index);
       if (switched) w.activeSlot = slot;
       return true;
+    },
+
+    // Put a card on the run the way the level-up table would, through the sim's own grant, so the
+    // stat the rig and the HUD read rises with it. The door exists because the three cards on
+    // offer are dealt at random: a scenario that wants the ward drone cannot bet on being handed
+    // it, and a step list can only press keys. An unknown id, or a card already at its ceiling,
+    // answers false rather than pretending.
+    givePowerup(id) {
+      const w = host.world();
+      const index = POWERUPS.findIndex((def) => def.id === id);
+      return grantPowerup(w, index);
     },
 
     /**

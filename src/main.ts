@@ -208,6 +208,9 @@ function idleState(backend: ForgeState['backend']): ForgeState {
     },
     wave: { index: 1, timeLeft: 0, bossAlive: false },
     boss: { alive: false, name: '', hp: 0, maxHp: 0 },
+    // No run, so no companion and nothing drawn: the same answer a live page gives when it has no
+    // backend to ask, which is why `drawn` is no place rather than a ring the drone is not on.
+    drone: { shown: false, orbit: { x: 1, y: 0 }, drawn: { x: 0, y: 0, h: 0 } },
     chapterComplete: false,
     victory: false,
     score: 0,

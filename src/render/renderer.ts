@@ -34,6 +34,7 @@ import { createNumbers } from './damageNumbers';
 import { createDroneRig } from './droneRig';
 import { drawnFace, playerFacing, yawToFace, type Face } from './facing';
 import { createFeel } from './feel';
+import { groundToRender } from './instancing';
 import { buildKit, disposeKit, syncKit, type Kit } from './kit';
 import { createLightRig } from './lights';
 import { bootRenderer, readMachine } from './machine';
@@ -77,8 +78,35 @@ export interface View {
    * number handed to `place`, which agrees with the shot by construction.
    */
   playerFace(out: Face): Face;
+  /**
+   * Write where the last drawn frame put the companion into `out`, in world terms.
+   *
+   * The twin of `playerFace` one layer over, for the same reason: the drone's place has an answer
+   * in the sim — `droneOrbit`, which is also the point its rounds come from — and an answer in
+   * the picture, and only the picture can say whether a body is on screen at all. So this reads
+   * the rig rather than calling `droneOrbit` again: a read model that went back to the helper
+   * would agree with itself on every frame, including the ones where nothing drew the drone.
+   *
+   * `x`/`y` are world floor coordinates (render z is `-y`, undone by `groundToRender`) and `h` is
+   * the height it was drawn at. `shown` is whether the body was in the frame, which is the one
+   * answer a run with no companion has to be able to give differently.
+   */
+  dronePoint(out: DronePoint): DronePoint;
   /** Re-read the canvas size: the window resizes, and the canvas starts at 0x0. */
   resize(): void;
+}
+
+/**
+ * What `View.dronePoint` reads back: the companion's place in the picture, in world coordinates.
+ *
+ * Plain JSON rather than a `Vector3` because it travels out through `__forgeState()`, and split
+ * into `h` because the height is the fact that says *above* the crowd rather than behind it.
+ */
+export interface DronePoint {
+  x: number;
+  y: number;
+  h: number;
+  shown: boolean;
 }
 
 export interface ViewOptions {
@@ -312,6 +340,18 @@ export async function createView(
       // Read off the rig rather than out of `face`, which is the shot line's scratch: this
       // answers what the last drawn frame put on screen, and it is asked between frames.
       return drawnFace(player.group.rotation.y, out);
+    },
+
+    dronePoint(out) {
+      // The companion hangs straight off the scene, so its own transform is its place in the
+      // world: there is no parent matrix to compose with, which is what lets this read
+      // `position` instead of `getWorldPosition` and allocate nothing on the way out.
+      const at = drone.group.position;
+      out.x = at.x;
+      out.y = groundToRender(at.z);
+      out.h = at.y;
+      out.shown = drone.group.visible;
+      return out;
     },
 
     resize() {

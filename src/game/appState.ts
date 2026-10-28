@@ -27,9 +27,16 @@ import { WEAPONS } from '../content/weapons';
 import type { BindTable } from '../input/bindings';
 import type { Settings } from './persistence';
 import { bossesAlive } from '../sim/systems/boss';
+import { droneOrbit } from '../sim/systems/drone';
 import type { World } from '../sim/world';
-import type { View } from '../render/renderer';
-import { snapshotSettings, type ForgeState, type ForgeWeapon, type SceneId } from './appTypes';
+import type { DronePoint, View } from '../render/renderer';
+import {
+  snapshotSettings,
+  type ForgeDrone,
+  type ForgeState,
+  type ForgeWeapon,
+  type SceneId,
+} from './appTypes';
 
 /** How deep the `enemies.nearest` list goes; see `nearestEnemies`. */
 const NEAREST_KEEP = 10;
@@ -145,6 +152,33 @@ function aimLines(host: StateHost): { shot: { x: number; y: number }; barrel: { 
   return { shot, barrel };
 }
 
+/**
+ * The companion's two places, and whether the picture has him at all.
+ *
+ * `orbit` is taken off `droneOrbit` and `drawn` off the rig, separately and on purpose: the rig
+ * draws the point *between* two ticks at `alpha` and adds the breath, so the two are free to come
+ * apart, and only a pair that can disagree can show a drone that is not being drawn. A state key
+ * written from the helper alone would agree with itself every time, including on a page where the
+ * rig was never mounted or never synced.
+ *
+ * With no view there is nothing drawn, so this answers no place rather than echoing the orbit.
+ * Fresh objects each call: a reused scratch would still be carrying the last page's drone, and a
+ * stale read is the exact failure this pair exists to catch.
+ */
+function dronePlace(host: StateHost): ForgeDrone {
+  const w = host.world;
+  const orbit = { x: 0, y: 0 };
+  droneOrbit(w.tick, w.player.x, w.player.y, orbit);
+  const drawn = { x: 0, y: 0, h: 0 };
+  const view = host.view;
+  if (!view) return { shown: false, orbit, drawn };
+  const at: DronePoint = view.dronePoint({ x: 0, y: 0, h: 0, shown: false });
+  drawn.x = at.x;
+  drawn.y = at.y;
+  drawn.h = at.h;
+  return { shown: at.shown, orbit, drawn };
+}
+
 /** Paint the whole `__forgeState()` shape from a live shell. */
 export function buildState(host: StateHost): ForgeState {
   const w = host.world;
@@ -220,6 +254,7 @@ export function buildState(host: StateHost): ForgeState {
     // the arc itself was written from this tick.
     wave: { index: w.wave.index, timeLeft: w.wave.timeLeft, bossAlive: bossesAlive(w) },
     boss: { alive: w.boss.alive, name: w.boss.name, hp: w.boss.hp, maxHp: w.boss.maxHp },
+    drone: dronePlace(host),
     chapterComplete: w.chapterComplete,
     victory: w.victory,
     score: w.score,

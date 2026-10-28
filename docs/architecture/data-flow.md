@@ -142,8 +142,10 @@ The points below are load-bearing rather than incidental, so they are recorded h
 
 `window.__forgeState()` is `buildState` in `src/game/appState.ts`: a fresh plain object each call from the `World`
 plus the shell read through a `StateHost` (`scene`, `backend`, `mode`, `errors`, the frame-time ring) — stable key
-set per TECH.md, ≤10 nearest enemies, no pool references leaked. `window.__forgeDebug` (`setSeed`, `spawn`,
-`grantXp`, `giveWeapon`, `bench`) is `createDebug` in `src/game/appDebug.ts`, and it takes the live `World` from its
+set per TECH.md, ≤10 nearest enemies, no pool references leaked. Two keys are read off the *drawing* rather than
+out of the World, because the drawing is the thing being checked: `player.barrel` through `View.playerFace` and
+`drone.drawn` through `View.dronePoint`. `window.__forgeDebug` (`setSeed`, `spawn`, `grantXp`, `giveWeapon`,
+`givePowerup`, `bench`) is `createDebug` in `src/game/appDebug.ts`, and it takes the live `World` from its
 host — a bench window arms a new run, so the bodies have to go into the world that restart made. Both route
 through `step`-side APIs only, so scenario results stay reproducible. Caught errors increment `errors` instead of
 being swallowed.

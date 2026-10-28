@@ -96,6 +96,24 @@ export function snapshotSettings(settings: Settings, table: BindTable): Settings
   };
 }
 
+/**
+ * What `__forgeState().drone` reports: the ward drone's two places and whether it has one.
+ *
+ * `orbit` is the sim's answer - the point `droneOrbit` publishes, which is also where the
+ * companion's rounds come from - and `drawn` is the picture's, read off the rig by
+ * `View.dronePoint`. They are read separately on purpose, for the reason `shot` and `barrel` are:
+ * a key copied straight out of the helper would agree with itself on every frame, including the
+ * one where the drone was never mounted, never synced, or had been left a tick behind.
+ */
+export interface ForgeDrone {
+  /** Whether the body was in the last drawn frame at all. */
+  shown: boolean;
+  /** Where the sim says he is this tick, in world floor coordinates. */
+  orbit: { x: number; y: number };
+  /** Where the last frame drew him, world `x`/`y` and the height `h` he flew at. */
+  drawn: { x: number; y: number; h: number };
+}
+
 /** The exact `window.__forgeState()` shape from TECH.md "State for checks". */
 export interface ForgeState {
   scene: SceneId;
@@ -136,6 +154,8 @@ export interface ForgeState {
    * than one), and `name` is the lead body's id. All quiet when nothing is on the floor.
    */
   boss: { alive: boolean; name: string; hp: number; maxHp: number };
+  /** The companion: where the sim puts him, where the picture puts him, and whether he is in it. */
+  drone: ForgeDrone;
   /** The encounter is dead and the next floor has not loaded yet. */
   chapterComplete: boolean;
   /** Every chapter has fallen, so the run is won. */
@@ -163,6 +183,12 @@ export interface ForgeDebug {
   spawn(type: number, n: number): number;
   grantXp(n: number): void;
   giveWeapon(id: string): boolean;
+  /**
+   * Put a card on the run through the sim's own grant, which is what also raises the stat a rig
+   * and the HUD read. A scenario needs the door because the three cards on offer are dealt at
+   * random, so a companion to test is not something a step list can bet on being handed.
+   */
+  givePowerup(id: string): boolean;
   /**
    * Start a bench window at horde size `n` (`?bench=N` gets here straight off the URL).
    *

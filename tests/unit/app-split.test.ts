@@ -13,6 +13,7 @@ import { defaultSettings, SAVE_KEY, type StorageLike } from '../../src/game/pers
 import { createInputFrame } from '../../src/sim/input';
 import { startArena, startChapter } from '../../src/sim/systems/levels';
 import { spawnEnemy } from '../../src/sim/systems/enemies';
+import { ORBIT_R, droneOrbit } from '../../src/sim/systems/drone';
 import { createRng, next } from '../../src/sim/rng';
 import { createWorld, loadSlot, type World } from '../../src/sim/world';
 import type { BenchRig } from '../../src/game/bench';
@@ -93,6 +94,38 @@ function hostOver(w: World, over: Partial<StateHost> = {}): StateHost {
     bindings: buildBinds(),
     frameTimes: new Float32Array(30),
     ...over,
+  };
+}
+
+/**
+ * A picture with something drawn in it: the barrel along +x, and the drone at a point the orbit
+ * never reaches.
+ *
+ * The two rendering reads need a fake `View` for the same reason: the seam is a *read* of the
+ * drawing, and the only way to see it working is to make the drawing answer something the sim
+ * would not have answered on its own. A drone point sitting on the ring would look exactly like a
+ * state that had recalculated `droneOrbit` beside it, so this one is a whole diagonal off it.
+ */
+function aDrawnView(): View {
+  return {
+    backend: 'none',
+    quality: 'low',
+    errors: 0,
+    draw: () => {},
+    aim: () => false,
+    playerFace: (out) => {
+      out.x = 1;
+      out.y = 0;
+      return out;
+    },
+    dronePoint: (out) => {
+      out.x = 4;
+      out.y = 4;
+      out.h = 2;
+      out.shown = true;
+      return out;
+    },
+    resize: () => {},
   };
 }
 
@@ -224,19 +257,7 @@ describe('the state read over a bare world', () => {
     // with itself every time, including the times the barrel pointed a quarter turn off it.
     w.muzzle.x = 0;
     w.muzzle.y = 1;
-    const drawn: View = {
-      backend: 'none',
-      quality: 'low',
-      errors: 0,
-      draw: () => {},
-      aim: () => false,
-      playerFace: (out) => {
-        out.x = 1;
-        out.y = 0;
-        return out;
-      },
-      resize: () => {},
-    };
+    const drawn = aDrawnView();
     expect(buildState(hostOver(w)).player).toMatchObject({
       shot: { x: 0, y: 1 },
       barrel: { x: 0, y: 1 },
@@ -245,6 +266,39 @@ describe('the state read over a bare world', () => {
       shot: { x: 0, y: 1 },
       barrel: { x: 1, y: 0 },
     });
+  });
+
+  it('asks the picture where the drone is, and can tell a drawn one from a hidden one', () => {
+    const w = createWorld(7);
+    // The sim's own answer, read here so the pair can be told apart. Written by the same helper
+    // the state calls, but *separately*: a `drawn` that came back equal to this would be the
+    // state agreeing with itself, which is the failure the whole key exists to catch.
+    const at = { x: 0, y: 0 };
+    droneOrbit(w.tick, w.player.x, w.player.y, at);
+    // Measured off the player, because the helper answers in absolute floor coordinates.
+    expect(Math.hypot(at.x - w.player.x, at.y - w.player.y), 'a ring, not the man').toBeCloseTo(
+      ORBIT_R,
+      4,
+    );
+
+    // Nothing to ask, so nothing drawn — and `drawn` answers no place rather than the orbit's own
+    // point, which is what keeps the two free to disagree.
+    const quiet = buildState(hostOver(w)).drone;
+    expect(quiet.shown, 'no view, so nothing was drawn').toBe(false);
+    expect(quiet.drawn).toEqual({ x: 0, y: 0, h: 0 });
+    expect(quiet.orbit, 'the ring is printed beside it, and is that same ring').toEqual(at);
+
+    // With a rig to ask, the state reports *its* point — a whole diagonal off the ring — rather
+    // than the orbit's, and reports that it was shown. That is the whole seam: a page whose draw
+    // pass never reached the rig would answer hidden at the origin, and these two would part.
+    const seen = buildState(hostOver(w, { view: aDrawnView() })).drone;
+    expect(seen.shown, 'a rig that is drawing says so').toBe(true);
+    expect(seen.drawn, 'read off the rig, not recalculated beside `orbit`').toEqual({
+      x: 4,
+      y: 4,
+      h: 2,
+    });
+    expect(seen.orbit, 'with the sim answer still printed beside it').toEqual(at);
   });
 });
 
@@ -414,6 +468,7 @@ describe('the same pieces inside the shell', () => {
         'player',
         'wave',
         'boss',
+        'drone',
         'chapterComplete',
         'victory',
         'score',

@@ -82,18 +82,24 @@ Every later task follows this file. The look is defined in DESIGN.md. Versions w
 ```
 { scene: "menu"|"playing"|"levelup"|"paused"|"summary"|"victory"|"levelselect"|"settings"|"history",
   backend: "webgpu"|"webgl2"|"none", tick, chapter, mode: "campaign"|"arena"|"bench",
-  player: { x, y, hp, maxHp, shield, level, xp, dashReady, alive },
+  player: { x, y, hp, maxHp, shield, level, xp, dashReady, alive, shot: {x,y}, barrel: {x,y} },
   wave: { index, timeLeft, bossAlive },
-  boss: { alive, name, hp, maxHp }  // combined across the encounter's bodies
+  boss: { alive, name, hp, maxHp },  // combined across the encounter's bodies
+  drone: { shown, orbit: {x,y}, drawn: {x,y,h} },
   chapterComplete, victory,
   score, kills, enemies: { count, byType: {chaser: n, …}, nearest: [{type,x,y,hp}] /*≤10*/ },
   weapons: [{ id, family, ammo, heat, energy, venting, reloading }], activeWeapon,
   powerups: [{id, tier}], levelUpChoices: [id…], fps, errors,
   settings: { quality, particles, damageNumbers, autoFire, shake, binds } }
 ```
+- Two of those pairs are read twice on purpose. `player.shot` is the line the round takes and
+  `player.barrel` the line the rig is *drawn* pointing along; `drone.orbit` is where the simulation puts
+  the companion and `drone.drawn` where the last frame drew him, read back off the rig through
+  `View.dronePoint`. A key copied out of the sim's own answer would agree with itself on every frame,
+  including the one where nothing was drawn, which is why the drawn half is measured in `render/`.
 - `errors` counts `window.onerror` and `unhandledrejection` events plus sim assertion failures.
 - `settings` is how a scenario proves a dial was *stored* rather than merely applied: move it, reload, read it back. A malformed payload in any of the three localStorage keys is dropped and counted in `errors`, never applied.
-- `window.__forgeDebug` exposes `{ setSeed, spawn(type,n), grantXp(n), giveWeapon(id), bench(n, {seconds, chapter}), arena() }` for scenarios.
+- `window.__forgeDebug` exposes `{ setSeed, spawn(type,n), grantXp(n), giveWeapon(id), givePowerup(id), bench(n, {seconds, chapter}), arena() }` for scenarios. Both grant doors go through the sim's own grant rather than by editing a stat, and `givePowerup` exists because the level-up offer is dealt at random: a scenario that wants one card cannot bet on being handed it.
 
 ## Performance
 - **Busiest moment:** 1,000 enemies, 1,500 projectiles, 8,000 particles, 600 XP shards and 16
