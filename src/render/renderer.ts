@@ -15,7 +15,8 @@
  * the yaw that turns the rig round), `cameraRig.ts` (the camera, the shake and what the
  * pointer means), `feel.ts` (this frame's events into shove and colour), and the layers that
  * were always their own files — `assets.ts`, `instancing.ts`, `meshes/`, `telegraphs.ts`,
- * `lights.ts`, `particles.ts`, `damageNumbers.ts`, `post.ts`, `quality.ts`.
+ * `lights.ts`, `particles.ts`, `damageNumbers.ts`, `post.ts`, `quality.ts` and `viewSnapshot.ts`
+ * (the reads that go back out through `__forgeState()`, which is why they are not lines here).
  *
  * What is left here is the sequence and the two things with no other home: how the tier's numbers
  * get onto the renderer, and the one guard around the draw. Everything is cosmetic and read-only:
@@ -34,7 +35,6 @@ import { createNumbers } from './damageNumbers';
 import { createDroneRig } from './droneRig';
 import { drawnFace, playerFacing, yawToFace, type Face } from './facing';
 import { createFeel } from './feel';
-import { groundToRender } from './instancing';
 import { buildKit, disposeKit, syncKit, type Kit } from './kit';
 import { createLightRig } from './lights';
 import { bootRenderer, readMachine } from './machine';
@@ -44,9 +44,13 @@ import { pickTier, pixelRatioFor, profileFor, type Backend, type Quality } from 
 import { createPlayerRig } from './playerRig';
 import { createShake, DEFAULT_SCALE } from './shake';
 import { createStage, FLOOR_SIZE } from './stage';
+import { droneSnapshot, type DronePoint } from './viewSnapshot';
 
 /** What `__forgeState().backend` reports; 'none' means neither backend came up. */
 export type { Backend, Quality } from './quality';
+
+/** The companion read's shape, so the state's two drone halves still come in through here. */
+export type { DronePoint } from './viewSnapshot';
 
 export interface View {
   readonly backend: Backend;
@@ -87,26 +91,12 @@ export interface View {
    * the rig rather than calling `droneOrbit` again: a read model that went back to the helper
    * would agree with itself on every frame, including the ones where nothing drew the drone.
    *
-   * `x`/`y` are world floor coordinates (render z is `-y`, undone by `groundToRender`) and `h` is
-   * the height it was drawn at. `shown` is whether the body was in the frame, which is the one
-   * answer a run with no companion has to be able to give differently.
+   * The read itself is `viewSnapshot.ts`'s, shared with the state tests' stand-in view for
+   * exactly that reason.
    */
   dronePoint(out: DronePoint): DronePoint;
   /** Re-read the canvas size: the window resizes, and the canvas starts at 0x0. */
   resize(): void;
-}
-
-/**
- * What `View.dronePoint` reads back: the companion's place in the picture, in world coordinates.
- *
- * Plain JSON rather than a `Vector3` because it travels out through `__forgeState()`, and split
- * into `h` because the height is the fact that says *above* the crowd rather than behind it.
- */
-export interface DronePoint {
-  x: number;
-  y: number;
-  h: number;
-  shown: boolean;
 }
 
 export interface ViewOptions {
@@ -343,15 +333,9 @@ export async function createView(
     },
 
     dronePoint(out) {
-      // The companion hangs straight off the scene, so its own transform is its place in the
-      // world: there is no parent matrix to compose with, which is what lets this read
-      // `position` instead of `getWorldPosition` and allocate nothing on the way out.
-      const at = drone.group.position;
-      out.x = at.x;
-      out.y = groundToRender(at.z);
-      out.h = at.y;
-      out.shown = drone.group.visible;
-      return out;
+      // The rig's own transform is its place in the world, read by the same helper a state test
+      // hands its stand-in view, so there is one maths between the drawing and the numbers.
+      return droneSnapshot(drone.group, out);
     },
 
     resize() {
