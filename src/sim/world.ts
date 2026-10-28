@@ -282,9 +282,11 @@ export interface World {
   enemyShots: Pool;
   shards: Pool;
   /**
-   * Supply crates on the floor. `kind` is what the crate holds (a POWERUPS index, or a
-   * WEAPONS index when `state` says it is a gun) and `state` is which of the two;
-   * `life` is how long it waits before it rots. See `systems/pickups.ts`.
+   * Supply crates on the floor. `state` says how a crate chose what it holds —
+   * `Holds.Powerup` when a chapter declared the card, `Holds.Roll` when it is drawn at the
+   * moment it opens — and `kind` is the POWERUPS index that follows from that, written only
+   * when something declared one. `life` is how long it waits before it rots.
+   * See `systems/pickups.ts`.
    */
   chests: Pool;
   /** Death blasts queued this tick, paid out by `resolveBlasts` (see systems/enemies). */

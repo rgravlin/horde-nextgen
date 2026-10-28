@@ -15,7 +15,7 @@
 
 import { PropKind, ZoneKind } from '../../sim/systems/obstacles';
 import type { EdgeId } from '../../sim/systems/waves';
-import type { BeatDef, HazardDef, PaletteDef, PropDef } from './types';
+import type { BeatDef, HazardDef, PaletteDef, PropDef, SupplyDef } from './types';
 
 /**
  * The three chapter families, as fog and key-light tints.
@@ -67,6 +67,19 @@ export function tank(x: number, y: number, s = 3): PropDef {
  */
 export function pillar(x: number, y: number, r = 1.25): PropDef {
   return { kind: PropKind.Pillar, x, y, w: r * 2, h: r * 2, r };
+}
+
+/**
+ * Supply shorthand: a crate holding one named card, at a place the player has to walk to.
+ *
+ * Not the same thing as `crate`, which is cover you shoot over. A crate written here is a
+ * pickup put down when the floor loads, so its position is a route rather than a roll —
+ * `TUNE.chestChance` decides whether a spawner marks a pack with one, and a chapter that means
+ * to hand something out cannot be left to that. The card is named by id and read back through
+ * `powerupIndex`; a name the table does not hold leaves a rolled crate rather than nothing.
+ */
+export function supply(x: number, y: number, powerup: string): SupplyDef {
+  return { x, y, powerup };
 }
 
 /**

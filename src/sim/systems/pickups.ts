@@ -8,21 +8,28 @@
  * "Scene state machine"). Drawing, reroll and pick all read world.rng, so a replay
  * of the same seed and the same picks gets the same cards.
  *
- * A crate is the other half of how a run gets stronger, and it is *placed* by the wave
- * spawner rather than here (see `dropChest`): a crate only earns its keep where the
- * player has to walk somewhere on purpose, so it marks where a fresh pack is assembling
- * off-screen — away from the player and only once the arena is busy enough that the
- * detour has something to spend it on. What it pays is decided when it is opened rather
- * than when it is dropped — a crate that rolled its contents on the floor could roll
- * one the run had already maxed out, and a reward that cannot be spent is not one.
+ * A crate is the other half of how a run gets stronger, and it arrives by two doors. The wave
+ * spawner drops one where a fresh pack is assembling (see `dropChest`): a crate only earns its
+ * keep where the player has to walk somewhere on purpose, so it marks where a pack is landing
+ * off-screen — away from the player and only once the arena is busy enough that the detour has
+ * something to spend it on. The other door is a chapter that *places* one (`placeSupply`): the
+ * same pool and the same walk-over, but put down on a route the level authored and holding the
+ * card the level named.
+ *
+ * A rolled crate decides what it pays when it is opened rather than when it is dropped — a
+ * crate that rolled its contents on the floor could roll one the run had already maxed out, and
+ * a reward that cannot be spent is not one. A declared crate is the exception, and the
+ * exception is the point: a chapter that writes "the ward drone is in the crate south-east of
+ * the spawn" has to hand over the ward drone, or what it wrote is a route to a random number.
  */
 
 import { ENEMIES } from '../../content/enemies';
-import { POWERUPS } from '../../content/powerups';
+import { POWERUPS, powerupIndex } from '../../content/powerups';
 import { WEAPONS } from '../../content/weapons';
 import { nextInt } from '../rng';
 import { DT, Ev, TUNE, alloc, loadSlot, pushEvent, release, type World } from '../world';
 import { recomputeStats, startTime } from './powerups';
+import type { SupplyDef } from '../../content/levels';
 
 /** Scratch for the offer draw: allocated with the module, reused by every offer. */
 const poolBuf = new Int32Array(POWERUPS.length);
@@ -270,6 +277,21 @@ export function grantPowerup(w: World, index: number): boolean {
 }
 
 /**
+ * What a crate's `state` slot says about its `kind` slot.
+ *
+ * Both slots are cleared by `alloc` and travel through a save, so a crate's contents are a
+ * fact about the floor rather than about whatever body last used the slot. `Roll` is 0 for
+ * exactly that reason: a slot nobody filled is a rolled crate, which is the common case and
+ * costs nothing to write.
+ */
+export const Holds = {
+  /** Nothing was decided at the drop: roll a gun, then a card, then XP, when it opens. */
+  Roll: 0,
+  /** `kind` is a POWERUPS index someone already chose, handed out as it stands. */
+  Powerup: 1,
+} as const;
+
+/**
  * Put a supply crate on the floor at (x, y).
  *
  * Called from the wave spawner when a pack arrives, and only for a pack that is worth
@@ -278,9 +300,10 @@ export function grantPowerup(w: World, index: number): boolean {
  * feet is a thing they walked past, and a crate in an empty stretch has nothing to spend
  * it on; between them they would turn the reward channel into noise.
  *
- * The crate carries no contents yet — `state` and `kind` are filled when it opens.
+ * Pass a `powerup` index to say what the crate holds, which is what `placeSupply` does for a
+ * chapter that declared one; leave it out and the crate rolls at the moment it opens.
  */
-export function dropChest(w: World, x: number, y: number): boolean {
+export function dropChest(w: World, x: number, y: number, powerup = -1): boolean {
   const i = alloc(w.chests);
   if (i < 0) return false;
 
@@ -288,7 +311,34 @@ export function dropChest(w: World, x: number, y: number): boolean {
   chests.x[i] = x;
   chests.y[i] = y;
   chests.life[i] = TUNE.chestLife;
+
+  // `kind` and `state` come out of `alloc` at 0, which already means *Roll*, so only a crate
+  // that was told what it holds writes anything. `kind` is a Uint16Array: a -1 would land in
+  // it as 65535, and an empty hand's roll would be read back as a card nobody owns.
+  if (powerup >= 0) {
+    chests.kind[i] = powerup;
+    chests.state[i] = Holds.Powerup;
+  }
   return true;
+}
+
+/**
+ * Put the crates a chapter declares on the floor.
+ *
+ * One door for both kinds of crate, so a chapter writes a place and a card and the sim works
+ * out what that means: `supply` rows go in at the moment the floor loads, through the same
+ * `dropChest` a hot drop uses and the same walk-over that opens it. Nothing about the position
+ * is rolled, which is the whole reason it is data — a route a seed could leave out is not a
+ * route, it is a coin flip a player cannot learn from.
+ *
+ * A card name the table does not hold comes back -1 from `powerupIndex` and drops a *rolled*
+ * crate rather than nothing, which is how a mistyped archetype has always been handled: level
+ * data gets mistyped, and a crate that pays something is a smaller lie than a floor with a
+ * hole in it. `tests/unit/droneChest.test.ts` fails on the typo either way.
+ */
+export function placeSupply(w: World, rows: readonly SupplyDef[] | undefined): void {
+  if (rows === undefined) return;
+  for (const row of rows) dropChest(w, row.x, row.y, powerupIndex(row.powerup));
 }
 
 /**
@@ -319,24 +369,35 @@ export function updateChests(w: World): void {
     if (dx * dx + dy * dy > open2) continue;
 
     pushEvent(w, Ev.Pickup, i, chests.kind[i], chests.x[i], chests.y[i]);
-    payChest(w);
+    payChest(w, i);
     release(chests, i);
   }
 }
 
 /**
- * Hand out what the crate the player is standing on has decided to hold.
+ * Hand out what the crate the player is standing on holds.
  *
- * Three payouts, in this order, and the order is the design: an empty second hand is
- * worth more than another tier of something they already run, so a crate fills a hand
- * first and only then upgrades. A run with two guns and everything maxed gets XP
- * instead, because a crate that pays nothing reads as a bug even when it is correct.
+ * A crate that was *told* what it holds pays that first, with no draw behind it: a chapter
+ * that put the ward drone south-east of the spawn meant the ward drone, and a run that walked
+ * 17 m for a random number did not walk 17 m for a random number. The card still has to be
+ * grantable, so a crate whose card the run already maxed falls through to the roll below
+ * rather than paying nothing.
  *
- * The gun is drawn from the ones the run does not already hold, so a crate cannot hand
- * back a second copy of the pistol and feel like a letdown; the power-up is drawn from
- * the ones still below their cap, which is the same pool the level-up cards draw from.
+ * Three payouts otherwise, in this order, and the order is the design: an empty second hand is
+ * worth more than another tier of something they already run, so a rolled crate fills a hand
+ * first and only then upgrades. A run with two guns and everything maxed gets XP instead,
+ * because a crate that pays nothing reads as a bug even when it is correct.
+ *
+ * The gun is drawn from the ones the run does not already hold, so a crate cannot hand back a
+ * second copy of the pistol and feel like a letdown; the power-up is drawn from the ones still
+ * below their cap, which is the same pool the level-up cards draw from. Both of those draws
+ * come off `world.rng`, which is the difference a declared crate makes: it takes no random
+ * number at all, so the same chapter at any seed hands the same card out in the same place.
  */
-function payChest(w: World): void {
+function payChest(w: World, slot: number): void {
+  const chests = w.chests;
+  if (chests.state[slot] === Holds.Powerup && grantPowerup(w, chests.kind[slot])) return;
+
   const empty = w.slots.findIndex((hand) => hand.weapon < 0);
   const guns = listGuns(w);
 

@@ -9,12 +9,13 @@
  * asks *what you are holding* rather than *where you are standing*.
  *
  * The shape is shared and lives one file up (`builders.ts`): `wall`/`crate`/`tank`/`pillar`
- * for cover, `acid`/`crusher` for the floor, `beat`/`eliteBeat` for a script. A chapter is
- * data read by `sim/systems/levels.ts`, `waves.ts` and the renderer, never code.
+ * for cover, `acid`/`crusher` for the floor, `beat`/`eliteBeat` for a script and `supply` for
+ * a crate the chapter hands out itself. A chapter is data read by `sim/systems/levels.ts`,
+ * `waves.ts` and the renderer, never code.
  */
 
 import { PACKS } from '../enemies';
-import { DOCKS, FOUNDRY, acid, beat, crate, eliteBeat, pillar, tank, wall } from './builders';
+import { DOCKS, FOUNDRY, acid, beat, crate, eliteBeat, pillar, supply, tank, wall } from './builders';
 import type { LevelDef } from './types';
 
 /** Chapters 1 to 3, in play order. See `index.ts` for what a chapter is. */
@@ -27,7 +28,8 @@ export const LEVELS_1_3: readonly LevelDef[] = [
     // splitter at 0:20 — deliberately seven seconds before the recipe reaches it at wave 3,
     // because the bay is where a player is supposed to meet "kill it away from the crowd" once
     // and alone. The charger comes in off the open +x gate, where a charge line has fourteen
-    // metres of floor to run down and no crate to start behind. Everything after 0:40 is a
+    // metres of floor to run down and no cover crate to start behind — the supply crate below
+    // is a pickup, and a pickup blocks nothing. Everything after 0:40 is a
     // mix rather than a body, which is what the bay hands over to the yard.
     waves: [
       beat(12, 'any', ['swarmling', 12]),
@@ -56,6 +58,20 @@ export const LEVELS_1_3: readonly LevelDef[] = [
     // cover has a shape.
     props: [crate(18, -14), crate(21, -14), crate(-20, 10, 2.5), wall(-14, -18, 10, 2), pillar(-9, 12, 1.5), pillar(12, 9, 1.5), pillar(10, -11, 1.5)],
     hazards: [acid(24, 12, 3, 10)],
+    // The ward drone crate, put on the bay's opening route: 17 m east-southeast of the spawn
+    // and 10 m south of the chargers' line, so it neither blocks a body's walk — a crate you
+    // pick up is not cover — nor sits in the corridor the 0:26 beat runs down. It sits just
+    // off the bottom edge of the 32x18 view for the same reason: that is where a crate gets an
+    // edge arrow and a radar dot pointing at it before the player can see it. Under four
+    // seconds each way at `TUNE.moveSpeed`, so a run that starts for it is back in the middle
+    // of the bay before the 0:12 swarm lands.
+    //
+    // It is declared rather than left to the spawner on purpose. `TUNE.chestChance` marks a
+    // pack with a crate a quarter of the time and `payChest` rolls what is inside it when it
+    // opens, so a run could play all ten chapters and never once be offered the companion.
+    // Where a power-up lives has to be a fact about the chapter to be a fact a player can
+    // learn, which is what this field is for.
+    supply: [supply(14, -10, 'drone')],
   },
   {
     id: 'conveyor-yard',

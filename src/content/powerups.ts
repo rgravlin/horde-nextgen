@@ -480,3 +480,20 @@ export const POWERUPS: readonly PowerupDef[] = [
     },
   },
 ];
+
+/** id → index, built once, in table order. See `powerupIndex`. */
+const POWERUP_BY_ID = new Map<string, number>(POWERUPS.map((def, i) => [def.id, i]));
+
+/**
+ * The table index of a card by id, or -1 when no card is called that.
+ *
+ * Chapter data names a card the way its script names an archetype — by id, read back through
+ * the table it came out of — so a level that hands out the ward drone writes `'drone'` rather
+ * than a number that means nothing beside it and drifts the first time the table is reordered.
+ * A name that matches nothing comes back -1 and the caller decides what a typo costs;
+ * `tests/unit/droneChest.test.ts` requires every id a chapter declares to resolve.
+ */
+export function powerupIndex(id: string): number {
+  const at = POWERUP_BY_ID.get(id);
+  return at === undefined ? -1 : at;
+}

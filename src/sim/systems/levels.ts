@@ -27,6 +27,7 @@ import { acidAt, installLayout, installZones, pointBlocked, pushOut, pushedX, pu
 import { DT, Ev, Tele, TUNE, pushEvent, setArena, type World } from '../world';
 import { hurtPlayer } from './enemyProjectiles';
 import { killEnemy, queueBlast, underground } from './enemies';
+import { placeSupply } from './pickups';
 import { startWaves, stopWaves } from './waves';
 
 /**
@@ -94,6 +95,11 @@ export function startArena(w: World): void {
  * chapter, a restart, the next chapter and the arena, and a `victory` left over from the run
  * before would end this one before it started.
  *
+ * A declared crate goes down with the room rather than with the clock: where a chapter hands
+ * something out is part of its floor plan — the walk it wants the player to make — and not a
+ * reward the drumbeat happened to drop, which is why it is installed here and rolled in
+ * `systems/waves.ts`.
+ *
  * The clock is reset through `startWaves` rather than written here: the recipe cursor starting
  * at the top of the floor's first pack is that function's meaning, and a restart that skipped it
  * would resume a run's drumbeat halfway down its own recipe.
@@ -116,6 +122,13 @@ function startFloor(w: World, floor: LevelDef | ArenaDef, chapter: number, endle
   setArena(w, floor.size);
   installLayout(w, floor.props);
   installZones(w, floor.hazards);
+
+  // The floor's own crates, put down with the room rather than rolled at a pack: a chapter
+  // that means to hand something out writes where it stands and what is in it. Only a chapter
+  // declares any — the arena is a lab to be measured in, not a route to be walked — hence the
+  // `in` test instead of an empty field on `ArenaDef`.
+  placeSupply(w, 'supply' in floor ? floor.supply : undefined);
+
   settle(w);
 
   startWaves(w, 1);

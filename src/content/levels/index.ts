@@ -36,9 +36,10 @@
  * a recipe a test pins cannot drift away from the test.
  *
  * What a chapter carries beyond the script is the room itself: a floor size, a fog and
- * key-light tint, the cover and the hazards. Every one of those is read by something — the
- * arena by the chapter's own installation, the tint by the renderer's fog and key light, the
- * boxes and circles by `sim/systems/obstacles.ts` — because a field nothing consults is the
+ * key-light tint, the cover, the hazards and the crates it hands out. Every one of those is
+ * read by something — the arena by the chapter's own installation, the tint by the renderer's
+ * fog and key light, the boxes and circles by `sim/systems/obstacles.ts`, the crates by
+ * `placeSupply` in `sim/systems/pickups.ts` — because a field nothing consults is the
  * same kind of lie as a `corridor` field with no geometry behind it.
  *
  * **On chapter length.** `duration` is seconds of script before the encounter walks in, and the
@@ -116,4 +117,5 @@ export type {
   LevelDef,
   PaletteDef,
   PropDef,
+  SupplyDef,
 } from './types';

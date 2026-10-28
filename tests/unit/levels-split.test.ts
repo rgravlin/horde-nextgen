@@ -279,9 +279,15 @@ describe('the frozen chapters', () => {
    * put the same bodies on the same floor and charged the same price for standing in the same
    * pools. The count and the kill total ride along because a number alone is hard to read: if
    * this fails, the two numbers say whether the chapter lost bodies or merely rearranged them.
+   *
+   * `loading-bay` was re-taken when the chapter gained a declared supply crate, which is a fact
+   * about the floor and therefore belongs in the fingerprint: `hashWorld` folds the crate pool,
+   * the same way it folds the hazard pools. Its two counts are unchanged — the fixture walks a
+   * square and never detours for a crate, so the crate sat unopened and only its position moved
+   * the number. `tests/unit/droneChest.test.ts` is the file that walks it.
    */
   const FROZEN = [
-    'loading-bay 4157680898 34 22',
+    'loading-bay 3551655721 34 22',
     'conveyor-yard 2382950176 33 44',
     'slag-canal 3057312166 57 20',
     // Chapters four to ten below were rewritten after the seven above were taken: each now

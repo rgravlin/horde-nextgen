@@ -1,8 +1,9 @@
 /**
- * The chapter schema: what a level is, in the three ways this sim can actually tell.
+ * The chapter schema: what a level is, in the four ways this sim can actually tell.
  *
- * A chapter here is a floor plan, a wave script and an elite roster, because those are the
- * things the simulation reads and therefore the things a player can feel and a test can pin.
+ * A chapter here is a floor plan, a wave script, an elite roster and the crates it hands out,
+ * because those are the things the simulation reads and therefore the things a player can feel
+ * and a test can pin.
  * The floor plan is boxes in world metres, installed into `sim/systems/obstacles.ts` when the
  * chapter starts and read back by the player's movement, every enemy's travel step, every
  * round in the air and the renderer's cover pass. The wave script is a list of timed packs
@@ -92,6 +93,29 @@ export interface HazardDef {
   readonly dps: number;
   readonly gap?: number;
   readonly warn?: number;
+}
+
+/**
+ * One crate a chapter puts on the floor, and the card it holds.
+ *
+ * A crate is the one thing on the floor the player is *asked to walk to*, so where one stands
+ * is level design rather than loot: the spawner's own drops are rolled at a pack that is already
+ * happening (`TUNE.chestChance`), which is the wrong shape for a chapter that wants to hand
+ * something out at a known place on a known route. Placed supply is that other case — it is
+ * there on every seed, and a player can learn it the way they learn a corridor.
+ *
+ * The card is named by id rather than by table index, exactly like `BeatDef.pack` names an
+ * archetype and `LevelDef.elites` names a variant: the number beside `'drone'` would mean
+ * nothing on the page and would drift the first time the power-up table was reordered. An id
+ * that matches nothing is not an error at load — it leaves a plain rolled crate, the same way a
+ * mistyped archetype falls back to the default one — and `tests/unit/droneChest.test.ts` fails
+ * if a chapter writes an id the table does not hold.
+ */
+export interface SupplyDef {
+  readonly x: number;
+  readonly y: number;
+  /** The `content/powerups.ts` id this crate hands out on a walk-over. */
+  readonly powerup: string;
 }
 
 /**
@@ -217,4 +241,12 @@ export interface LevelDef {
   readonly props: readonly PropDef[];
   /** Floor hazards. */
   readonly hazards: readonly HazardDef[];
+  /**
+   * Crates this chapter puts down when its floor loads, and what each one holds.
+   *
+   * Written by `sim/systems/pickups.ts` (`placeSupply`) into the same pool the wave spawner
+   * drops rolled crates, and read back by the crate's walk-over. Absent means the chapter
+   * hands nothing out itself and every crate a run finds is one the spawner rolled.
+   */
+  readonly supply?: readonly SupplyDef[];
 }

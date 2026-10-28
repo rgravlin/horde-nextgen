@@ -482,6 +482,17 @@ cards still under their cap (`buildChoices`), and a supply crate gives a gun *or
 new card is reachable as soon as it is written. Both doors go through `grantPowerup`, which is
 also where a re-dose replaces a running timed dose instead of stacking a second copy of it.
 
+A third door is open to a card a run should be able to *go and get*: a chapter may name the card
+in one of its own crates. `"drone"` is what chapter 1 names, at (14, -10) — a point on the bay's
+opening route, south of the chargers' lane and just off the bottom edge of the 32×18 view, so the
+radar dot and the edge arrow both point at it before the crate is visible. `payChest` pays a named
+card as it stands, ahead of the roll an undeclared crate makes, and
+`tests/unit/droneChest.test.ts` *walks* the route rather than granting the card: a chapter that
+names a card has to hand that card over, and a run that never walks to the crate has to end
+without it. A crate is the shape to use for anything that should be findable rather than dealt —
+`TUNE.chestChance` marks a pack with a crate a quarter of the time and the roll inside it is a
+second coin, so a card left to those two is one most runs never meet.
+
 ### Adding a level — `src/content/levels/`, read by `src/sim/systems/levels.ts`
 
 A chapter is a floor plan, a wave script and an elite roster, and `startChapter` installs all
@@ -501,6 +512,13 @@ itself inside is 40 to 60 (under about 40 the wave spawner runs out of room to a
 `palette` is the fog and key-light tint, read once per chapter. `props` is cover, authored
 with `wall`/`crate`/`tank`/`pillar`; `hazards` are the two floor zones, `acid` at `dps` a
 second and `crusher` telling for `warn` seconds before it hits for `dps` every `gap` seconds.
+`supply` is what the chapter hands out, authored with `supply(x, y, powerupId)`: each row puts a
+crate on the floor the moment the room loads — `placeSupply`, called from `startFloor` — holding
+the card named, resolved through `powerupIndex`. These crates are not the spawner's rolled ones:
+where they stand and what they hold are facts of the floor plan, so every seed plays the same
+route, and an id the power-up table does not hold leaves a plain rolled crate rather than a hole
+in the floor. The crate pool holds 24, and `tests/unit/droneChest.test.ts` reads every chapter's
+rows back against the pool.
 
 Cover is one code path — `src/sim/systems/obstacles.ts` — for all four shapes: a body or a
 round is a circle, a prop is a box or a circle, and what is tested is the segment the mover
