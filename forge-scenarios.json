@@ -420,5 +420,657 @@
         }
       }
     ]
+  },
+  {
+    "name": "ward drone",
+    "path": "/?seed=5",
+    "steps": [
+      {
+        "wait": 5000
+      },
+      {
+        "press": "Enter"
+      },
+      {
+        "wait": 800
+      },
+      {
+        "state": {
+          "scene": "==playing",
+          "drone.shown": "==false",
+          "powerups.length": "==0"
+        }
+      },
+      {
+        "mouse": [
+          1000,
+          560
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          200
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          145
+        ]
+      },
+      {
+        "state": {
+          "powerups.length": ">=1",
+          "drone.shown": "==true",
+          "errors": "==0"
+        }
+      },
+      {
+        "hold": [
+          "KeyA",
+          300
+        ]
+      },
+      {
+        "hold": [
+          "KeyW",
+          220
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          300
+        ]
+      },
+      {
+        "hold": [
+          "KeyW",
+          220
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          300
+        ]
+      },
+      {
+        "hold": [
+          "KeyW",
+          220
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          300
+        ]
+      },
+      {
+        "hold": [
+          "KeyW",
+          220
+        ]
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "wait": 2500
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "hold": [
+          "KeyW",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          350
+        ]
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "wait": 2500
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "hold": [
+          "KeyW",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyW",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          350
+        ]
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "wait": 2500
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "hold": [
+          "KeyW",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyW",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyD",
+          350
+        ]
+      },
+      {
+        "hold": [
+          "KeyS",
+          450
+        ]
+      },
+      {
+        "hold": [
+          "KeyA",
+          350
+        ]
+      },
+      {
+        "press": "Digit1"
+      },
+      {
+        "shot": "drone"
+      },
+      {
+        "state": {
+          "drone.shown": "==true",
+          "drone.drawn.h": ">0.9",
+          "enemies.count": ">0",
+          "errors": "==0"
+        }
+      }
+    ]
   }
 ]
