@@ -10,7 +10,8 @@
  * `machine.ts` (which backend and which tier this machine gets), `stage.ts` (the air, the floor
  * and the one light that casts shadows), `kit.ts` (everything drawn out of one World's pools,
  * which is a set with a lifetime because a restart builds a new World), `playerRig.ts` (the
- * player's body and the gun in its hand) and `facing.ts` (the line that gun points along, and
+ * player's body and the gun in its hand), `droneRig.ts` (the one companion, standing on the orbit
+ * point the sim publishes) and `facing.ts` (the line that gun points along, and
  * the yaw that turns the rig round), `cameraRig.ts` (the camera, the shake and what the
  * pointer means), `feel.ts` (this frame's events into shove and colour), and the layers that
  * were always their own files — `assets.ts`, `instancing.ts`, `meshes/`, `telegraphs.ts`,
@@ -30,6 +31,7 @@ import type { World } from '../sim/world';
 import { loadAssets } from './assets';
 import { createCameraRig } from './cameraRig';
 import { createNumbers } from './damageNumbers';
+import { createDroneRig } from './droneRig';
 import { drawnFace, playerFacing, yawToFace, type Face } from './facing';
 import { createFeel } from './feel';
 import { buildKit, disposeKit, syncKit, type Kit } from './kit';
@@ -152,6 +154,9 @@ export async function createView(
   const stage = createStage(assets, profile);
   const scene = stage.scene;
   const player = createPlayerRig(scene, profile);
+  // The companion's body sits beside the player's rather than in the per-World kit: it reads no
+  // pool, so there is nothing a restart changes about it.
+  const drone = createDroneRig(scene, profile);
 
   /**
    * The lamps the gunfire lights (TECH.md: up to 16 pooled point lights, which do not cast
@@ -264,6 +269,10 @@ export async function createView(
       playerFacing(world, face);
       player.place(p.x, p.y, yawToFace(face.x, face.y), p.alive);
       player.hold(world.slots[world.activeSlot]?.weapon ?? -1);
+
+      // The companion is drawn on the point its own rounds are loosed from: `droneRig.ts` asks
+      // `droneOrbit` for that point instead of writing a second orbit here.
+      drone.sync(world, alpha);
 
       rig.frame(world, dt, step, orbit);
       stage.follow(p.x, p.y);

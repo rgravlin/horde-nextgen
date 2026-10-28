@@ -573,11 +573,11 @@ numbers as a chapter run with "Endless Arena" where the chapter name goes.
 ### Adding a model — built in `src/render/meshes/`, or streamed from `public/`
 
 A look is chosen one of two ways, and the choice is made by how many of the thing there are.
-Bodies, rounds, the supply crate's two halves and the telegraphs are **built**: procedural
-geometry, because 1,000 bodies cannot be authored one at a time (DESIGN.md "Horde"). The room's
-cover is **fetched**: CC0 glTF, because a handful of set pieces is cheaper to stream than to
-model. What a page streams at startup is nine files — the floor's three maps, the kit's shared
-colormap, the HDRI and four kit modules — about 3.2 MB, of which the HDRI is half.
+Bodies, rounds, the supply crate's two halves, the ward drone and the telegraphs are **built**:
+procedural geometry, because 1,000 bodies cannot be authored one at a time (DESIGN.md "Horde").
+The room's cover is **fetched**: CC0 glTF, because a handful of set pieces is cheaper to stream
+than to model. What a page streams at startup is nine files — the floor's three maps, the kit's
+shared colormap, the HDRI and four kit modules — about 3.2 MB, of which the HDRI is half.
 
 **Built.** Add a recipe to `SHAPES` in `src/render/meshes/shapes.ts`, keyed by *silhouette* and
 authored in metres with the feet at `y = 0`; `shapesC.ts` takes the exceptions whose shape has to
@@ -596,9 +596,13 @@ look for one before writing a recipe.
   not a free asset; that is why the cost is written down twice, in the recipe and in the test.
 - Nothing in `src/render/meshes/` reads a `World`. It hands out geometry and materials and stays
   ignorant of who wears them — the callers are `instancing.ts`, which clones each shape before it
-  attaches a batch's per-instance buffers, and `chests.ts`, which draws the crate and its pillar
-  as one batch each, cut to the crate pool. The two prop shapes are not in `SHAPE_COSTS`, which
-  is keyed by enemy silhouette; their 40–300 triangle cost is pinned in `tests/unit/chests.test.ts`.
+  attaches a batch's per-instance buffers, `chests.ts`, which draws the crate and its pillar
+  as one batch each, cut to the crate pool, and `droneRig.ts`, which draws the ward drone's hull
+  and trim as one two-mesh rig rather than a batch (there is one companion, not a pool of them).
+  The prop shapes are not in `SHAPE_COSTS`, which is keyed by enemy silhouette; the crate's
+  40–300 triangle cost is pinned in `tests/unit/chests.test.ts` and the drone's two halves in
+  `tests/unit/drone-geometry.test.ts`, which also measures the shapes against a blob and a ring
+  so the drone stays a cross rather than turning into another dot.
 
 **Streamed.** Put the file under `public/` — Vite serves that folder verbatim at the site root,
 which is where the paths in `src/render/assets.ts` point — and add a row to `ASSETS.md` with its

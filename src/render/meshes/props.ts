@@ -1,10 +1,10 @@
 /**
  * Everything the horde does not wear: the projectiles, the supply crate and its beacon, the
- * player's kit-bash and the flat shapes a telegraph is drawn with.
+ * ward drone's two halves, the player's kit-bash and the flat shapes a telegraph is drawn with.
  *
  * These are built once per page too, but they need no cache — one batch each, made in
- * `instancing.ts`, `chests.ts` and `telegraphs.ts`, so a builder here just returns a fresh
- * geometry.
+ * `instancing.ts`, `chests.ts`, `droneRig.ts` and `telegraphs.ts`, so a builder here just returns
+ * a fresh geometry.
  */
 
 import {
@@ -147,6 +147,110 @@ export function beaconGeometry(): BufferGeometry {
     false,
   );
   if (geometry === null) throw new Error('meshes: beacon merge failed');
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/* ── The ward drone ────────────────────────────────────────────────────────────── */
+
+/** m — how far out each rotor sits, measured along a diagonal, which is how a quadrotor is laid out. */
+const ARM_OUT = 0.155;
+
+/** m — one rotor disc's radius and thickness. */
+const ROTOR_R = 0.075;
+const ROTOR_T = 0.016;
+
+/** The four rotor bearings, as the sign pairs of the diagonals they lie on. */
+const ARMS: ReadonlyArray<readonly [number, number]> = [
+  [1, 1],
+  [1, -1],
+  [-1, 1],
+  [-1, -1],
+];
+
+/**
+ * The drone's hull: a faceted pod, a mast over it and four arms, each ending in a rotor disc.
+ *
+ * The companion existed for two tasks as a rule with no body: its rounds came out of empty air,
+ * which is the one thing a player cannot read — the shot line has nowhere to start and the
+ * threat that walks in from that side has no tell. So this is a *filler* shape, and its bar is
+ * "a shape the eye can learn", which is what DESIGN.md's asset rule asks for and its avoid-list
+ * enforces (no reliance on colour alone). Four separated discs on a cross is the silhouette
+ * chosen for that, and it says *machine that goes round*, which the player already reads off the
+ * drone's own orbit.
+ *
+ * What it deliberately is not: the enemy `orbiter`, which also walks a circle about the player
+ * and has to stay the thing the player flinches at. That body is one lens under one continuous
+ * ring with an Ember accent, it is 0.45 m across and it hangs at 0.64 m; this is four
+ * discontinuous discs on a cross with a cyan trim, at half the height. A ring reads as *aiming*
+ * (its shape carries its bolt line), a cross reads as *flying*.
+ *
+ * Authored about its own centre rather than with its feet at y = 0, unlike the crate and the
+ * horde: it flies, and the two prop shapes here that hover or travel are both centred (a tracer
+ * is stretched along its travel for the same reason). `droneRig.ts` supplies the height, and the
+ * size is what one is drawn at — 0.46 m across, 0.26 m through — because at 1.35 m out beside a
+ * 1.8 m player a metre-wide drone would hide him and a 0.1 m one would be a mote.
+ */
+export function droneBody(): BufferGeometry {
+  // The two crossing arms are two boxes rather than four: one long box through the centre,
+  // turned ±45°, reaches two diagonals, and the pair reaches all four. Leaving the four gaps
+  // between the rotor discs empty is what keeps this a cross instead of a plate.
+  const arm = (turn: number): BufferGeometry =>
+    flat(boxSegment(ARM_OUT * 2.2, 0.026, 0.045).translate(0, 0.012, 0).rotateY(turn));
+
+  const geometry = mergeGeometries(
+    [
+      flat(new IcosahedronGeometry(0.13, 0).scale(1.15, 0.62, 1.15)),
+      flat(boxSegment(0.14, 0.075, 0.17).translate(0, 0.1, 0)),
+      flat(boxSegment(0.1, 0.055, 0.12).translate(0, -0.095, 0.015)),
+      arm(Math.PI / 4),
+      arm(-Math.PI / 4),
+      ...ARMS.map(([sx, sz]) =>
+        flat(
+          new CylinderGeometry(ROTOR_R, ROTOR_R, ROTOR_T, 6).translate(
+            sx * ARM_OUT,
+            0.03,
+            sz * ARM_OUT,
+          ),
+        ),
+      ),
+    ],
+    false,
+  );
+  if (geometry === null) throw new Error('meshes: drone body merge failed');
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/**
+ * The drone's accents: four rotor hubs and a sensor looking forward.
+ *
+ * The hubs sit above the discs so the four lobes carry a dot each — the "silhouette plus accent
+ * dots" read DESIGN.md wants, and the reason a drone is findable in a crowd of dark bodies at a
+ * glance. The sensor is the second reason: it is the only part that sticks out at one end, so
+ * the silhouette has a front, which is what the rig turns when the drone leans into its circle.
+ *
+ * Cyan at a gain under the player's own trim (2.2): Alien Cyan is the player's colour — shield,
+ * hairlines, dash trail — and a companion has to read as *his* machine rather than as a sixth
+ * faction, but not so bright that the drone out-lights the man it orbits. No enemy accent in the
+ * tables is cyan, so nothing here borrows a hostile's hue.
+ */
+export function droneTrim(): BufferGeometry {
+  const geometry = mergeGeometries(
+    [
+      ...ARMS.map(([sx, sz]) =>
+        flat(new OctahedronGeometry(0.03, 0).translate(sx * ARM_OUT, 0.055, sz * ARM_OUT)),
+      ),
+      // Apex forward: `rotateX(+π/2)` is the way a cone's own +y axis lands on +z, which is the
+      // rig's forward. The boom clears the rotor discs (their rims reach 0.23 m) out to 0.285 m,
+      // which is what gives the silhouette a front — see `droneRig.ts` for what turns on that.
+      flat(new ConeGeometry(0.048, 0.19, 5).rotateX(Math.PI / 2).translate(0, 0.005, ARM_OUT + 0.035)),
+    ],
+    false,
+  );
+  if (geometry === null) throw new Error('meshes: drone trim merge failed');
+  geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
   return geometry;
 }
