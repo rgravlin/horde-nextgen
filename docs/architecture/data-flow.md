@@ -49,7 +49,12 @@ DOM events + a polled pad ─▶ InputSampler ──(once per tick)──▶ Inp
   the line the round takes (led at `world.nearest` when auto-fire is the one shooting, the steered pair otherwise) and
   which the shot then spends; `render/facing.ts` reads that same field to turn the player's rig, so a barrel cannot be
   drawn pointing somewhere its own tracers do not go. It is derived per tick and read-only downstream, so it is in
-  neither the save nor the fingerprint, exactly like `hash.findable` above. Damage, falloff, pierce and knockback still
+  neither the save nor the fingerprint, exactly like `hash.findable` above. The ward drone's *place* is the same kind
+  of fact one layer down: `systems/drone.ts` answers it with `droneOrbit(tick, playerX, playerY, out)` and looses the
+  volley from that answer, and a drawn drone or a `__forgeState()` read is meant to take that call rather than derive
+  a circle of their own — a second `cos`/`sin` is free to disagree about the radius, the centre or the bearing, and
+  then the companion is drawn somewhere its own rounds did not come from; `tests/unit/drone.test.ts` holds the
+  origins a run really loosed, read out of the event ring, against it. Damage, falloff, pierce and knockback still
   all come off the shot's `WeaponDef`, and the seven delivery paths share one `damage` helper so a ray, a sweep and a
   burst that reach the same body for the same reason report the same number — and each reports it as one `Hit` event, a
   beam's per-tick cuts included. What keeps hurting a body after the shot is gone is a status, not a shot:

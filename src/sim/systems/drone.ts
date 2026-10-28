@@ -9,7 +9,7 @@
  * resolves the rounds it puts in the air, so a drone round spends the same tick it was
  * loosed in, exactly like a hand-fired one).
  *
- * Three things shape it:
+ * Four things shape it:
  *
  * - **It borrows the pistol def rather than inventing a gun.** `DRONE_WEAPON` is the
  *   pistol's index, so the round is delivered by the `projectile` path with the
@@ -25,6 +25,14 @@
  * - **It costs nothing when the run has no drone.** The whole pass is behind one
  *   `stats.drone` comparison and, when a body is in reach, one query — so the default
  *   1,000-enemy case pays what AGENTS.md asks of it.
+ * - **It shares one answer for where it stands.** `droneOrbit` says where the drone is for a
+ *   tick, and the muzzle is loosed from that answer instead of from a copy of its maths. The
+ *   picture has to put the drone *somewhere*, and a second `cos`/`sin` over there would be free
+ *   to pick another radius, another centre or another angle convention — the failure being a
+ *   drone drawn somewhere its own rounds did not come from, which is the same seam
+ *   `render/facing.ts` was written for. Hence "pure": derived from the tick and the player and
+ *   stored nowhere, so it cannot go stale, and asked the same way by the sim, by a view and by
+ *   a check.
  *
  * No DOM, no engine, no wall clock: the cadence counts ticks, so this runs headless.
  */
@@ -36,8 +44,14 @@ import { Ev, alloc, pushEvent, type World } from '../world';
 /** The gun the drone copies: `WEAPONS[0]`, the pistol. */
 const DRONE_WEAPON = 0;
 
-/** m — radius of the ring the drone circles the player in. */
-const ORBIT_R = 1.35;
+/**
+ * m — radius of the ring the drone circles the player in.
+ *
+ * Exported because the ring is something a drawn drone is sized by and a check asserts
+ * against, and `droneOrbit` below is the only code that spends it: the number and the maths
+ * that uses it are one definition, not two that have to be kept in step.
+ */
+export const ORBIT_R = 1.35;
 
 /** rad per tick that it walks round that ring (a little under half a turn a second). */
 const ORBIT_W = 0.05;
@@ -64,14 +78,56 @@ const DMG_SCALE = 0.65;
 const EPS = 1e-6;
 
 /**
+ * A point in the sim's flat world, and the shape `droneOrbit` writes into.
+ *
+ * A pair the caller owns rather than a returned object because the question gets asked once a
+ * tick by the sim and up to twice a frame by a view that wants to blend two ticks, and
+ * ARCHITECTURE.md's no-allocation rule covers both halves — `render/facing.ts` does the same
+ * for the player's rig, for the same reason.
+ */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+/**
+ * Where the drone is at `tick`, with the player at (`px`, `py`), written into `out`.
+ *
+ * The one answer to "where is the drone", shared on purpose: `updateDrone` looses its rounds
+ * from it, a drawn drone wants to sit on it, and a check wants to prove those are the same
+ * place. Being derived rather than stored only keeps the picture honest while there is one
+ * formula, so there is one here — and `tests/unit/drone.test.ts` holds the round origins a run
+ * really loosed, read out of the event ring rather than out of this function, against it. That
+ * is what a shared source buys: a second copy that disagrees fails a test instead of a review.
+ *
+ * Pure, with nothing kept between calls: asking twice is the same answer twice, and a view can
+ * evaluate it at `tick` and at `tick - 1` and blend the two.
+ */
+export function droneOrbit(tick: number, px: number, py: number, out: Point): Point {
+  const a = tick * ORBIT_W;
+  out.x = px + Math.cos(a) * ORBIT_R;
+  out.y = py + Math.sin(a) * ORBIT_R;
+  return out;
+}
+
+/**
+ * The tick's orbit point, written once at the top of the pass and spent by every round it looses.
+ *
+ * Module scratch for the reason `systems/enemies/shared.ts` gives for its own: it never outlives
+ * the tick, and the alternative to it is a fresh object per volley inside `step`.
+ */
+const orbit: Point = { x: 0, y: 0 };
+
+/**
  * One tick of the drone: find someone within reach, loose one round each at up to
  * `stats.drone` of them.
  *
  * The volley gate is the tick count rather than a timer because the drone has no
  * magazine, no heat and no cooldown of its own — it is not a hand, and giving it a
  * `WeaponSlot` would put a second set of gauges in `__forgeState()` that the HUD has
- * nowhere to put. The orbit angle comes from the same number for the same reason: it
- * needs no state, and it is the same circle in every run with the same length.
+ * nowhere to put. The orbit comes from the same number for the same reason: it needs no
+ * state, and it is the same circle in every run with the same length. It comes through
+ * `droneOrbit` rather than inline so the picture can be drawn from that same circle.
  */
 export function updateDrone(w: World): void {
   const tier = w.stats.drone;
@@ -94,9 +150,9 @@ export function updateDrone(w: World): void {
   );
   if (found === 0) return;
 
-  const angle = w.tick * ORBIT_W;
-  const ox = player.x + Math.cos(angle) * ORBIT_R;
-  const oy = player.y + Math.sin(angle) * ORBIT_R;
+  droneOrbit(w.tick, player.x, player.y, orbit);
+  const ox = orbit.x;
+  const oy = orbit.y;
 
   const def = WEAPONS[DRONE_WEAPON];
   const dmg = def.dmg * DMG_SCALE;
